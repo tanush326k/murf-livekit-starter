@@ -12,6 +12,7 @@ from livekit.agents import (
     inference,
     tokenize,
     room_io,
+    UserInputTranscribedEvent,
 )
 from livekit.plugins import murf, google, deepgram, noise_cancellation, silero
 
@@ -22,6 +23,18 @@ load_dotenv(".env.local")
 # Change this prompt to change what your voice agent does.
 # See README.md for example prompts (customer support, language tutor, receptionist).
 SYSTEM_PROMPT = """You are a highly knowledgeable financial advisor specializing in Indian government schemes, public financial offers, and banking guides. Your primary role is to educate users on schemes like Jan Dhan Yojana, Atal Pension Yojana, Sukanya Samriddhi, Mudra loans, and other central/state government initiatives. Provide step-by-step guides on how to apply, eligibility criteria, and benefits. Additionally, spread awareness about safe banking practices and how to avoid financial fraud. Be empathetic, trustworthy, and speak in simple terms. If you don't know the exact details, advise them to check official Indian government portals (like India.gov.in or specific ministry sites). Your responses must be concise and without complex formatting, emojis, or symbols."""
+
+# Hindi/Hinglish keywords
+HINDI_KEYWORDS = {
+    "kya", "hai", "aur", "main", "haan", "nahin", "aap",
+    "namaste", "shukriya", "yojana", "batao", "bataiye",
+    "samjhao", "dhan", "suraksha", "bima", "pension",
+    "mein", "ke", "ki", "se", "ko", "ka", "jo", "toh",
+    "bhi", "ho", "kar", "raha", "rahi", "rha", "rhi",
+    "mujhe", "mera", "meri", "hum", "tum", "apna", "apni",
+    "karke", "karo", "karna", "tha", "thi", "the",
+    "ab", "kab", "tab", "sab"
+}
 
 
 class Assistant(Agent):
@@ -68,7 +81,7 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(model="nova-3", language="multi"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
@@ -90,6 +103,42 @@ async def my_agent(ctx: JobContext):
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
+
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev: UserInputTranscribedEvent):
+        transcript = ev.transcript.strip().lower()
+
+        if not transcript:
+            return
+
+        # Detect Devanagari (Hindi script)
+        has_devanagari = any(
+            0x0900 <= ord(ch) <= 0x097F
+            for ch in transcript
+        )
+
+        # Detect Hinglish keywords
+        words = set(transcript.split())
+        has_hindi_words = not words.isdisjoint(HINDI_KEYWORDS)
+
+        if has_devanagari or has_hindi_words:
+            logger.info(
+                f"Detected Hindi/Hinglish: {ev.transcript}"
+            )
+
+            # Change voice if supported
+            session.tts.update_options(
+                voice="hi-IN-anisha"
+            )
+
+        else:
+            logger.info(
+                f"Detected English: {ev.transcript}"
+            )
+
+            session.tts.update_options(
+                voice="en-IN-anisha"
+            )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
