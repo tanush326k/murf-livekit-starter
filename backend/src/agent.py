@@ -12,49 +12,39 @@ from livekit.agents import (
     inference,
     tokenize,
     room_io,
+    UserInputTranscribedEvent,
 )
-from livekit.plugins import murf, google, deepgram, noise_cancellation, silero
+from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Change this prompt to change what your voice agent does.
-# See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a highly knowledgeable financial advisor specializing in Indian government schemes, public financial offers, and banking guides. Your primary role is to educate users on schemes like Jan Dhan Yojana, Atal Pension Yojana, Sukanya Samriddhi, Mudra loans, and other central/state government initiatives. Provide step-by-step guides on how to apply, eligibility criteria, and benefits. Additionally, spread awareness about safe banking practices and how to avoid financial fraud. Be empathetic, trustworthy, and speak in simple terms. If you don't know the exact details, advise them to check official Indian government portals (like India.gov.in or specific ministry sites). Your responses must be concise and without complex formatting, emojis, or symbols."""
+from prompt import SYSTEM_PROMPT
 
+
+HINDI_KEYWORDS = {
+    "kya", "hai", "aur", "main", "haan", "nahin", "aap",
+    "namaste", "shukriya", "yojana", "batao", "bataiye",
+    "samjhao", "dhan", "suraksha", "bima", "pension",
+    "mein", "ke", "ki", "se", "ko", "ka", "jo", "toh",
+    "bhi", "ho", "kar", "raha", "rahi", "rha", "rhi",
+    "mujhe", "mera", "meri", "hum", "tum", "apna", "apni",
+    "karke", "karo", "karna", "tha", "thi", "the",
+    "ab", "kab", "tab", "sab"
+}
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
-
-
 server = AgentServer()
-
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
-
 server.setup_fnc = prewarm
-
 
 @server.rtc_session(agent_name="my-agent")
 async def my_agent(ctx: JobContext):
@@ -68,7 +58,7 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(model="nova-3", language="multi"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=google.LLM(
@@ -76,20 +66,52 @@ async def my_agent(ctx: JobContext):
             ),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts=murf.TTS(
-                voice="pooja", 
-                locale="en-IN",
+           tts=murf.TTS(
+                voice="en-IN-anisha", 
                 style="Conversation",
                 tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
                 text_pacing=True
             ),
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-        # See more at https://docs.livekit.io/agents/build/turns
+        turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
+
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev: UserInputTranscribedEvent):
+        transcript = ev.transcript.strip().lower()
+
+        if not transcript:
+            return
+
+        # Detect Devanagari (Hindi script)
+        has_devanagari = any(
+            0x0900 <= ord(ch) <= 0x097F
+            for ch in transcript
+        )
+
+        # Detect Hinglish keywords
+        words = set(transcript.split())
+        has_hindi_words = not words.isdisjoint(HINDI_KEYWORDS)
+
+        if has_devanagari or has_hindi_words:
+            logger.info(
+                f"Detected Hindi/Hinglish: {ev.transcript}"
+            )
+
+            # Change voice if supported
+            session.tts.update_options(
+                voice="hi-IN-anisha"
+            )
+
+        else:
+            logger.info(
+                f"Detected English: {ev.transcript}"
+            )
+
+            session.tts.update_options(
+                voice="en-IN-anisha"
+            )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
