@@ -1,4 +1,8 @@
+import json
 import logging
+import os
+import re
+from typing import Optional
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -8,20 +12,50 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
-    cli,
-    inference,
-    tokenize,
-    room_io,
     UserInputTranscribedEvent,
+    cli,
+    llm,
+    room_io,
+    tokenize,
 )
-from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import deepgram, murf, noise_cancellation, openai, silero
+
+import db
+from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger("agent")
-
 load_dotenv(".env.local")
 
-from prompt import SYSTEM_PROMPT
+
+def clean_speech_text(text: str) -> str:
+    if not text:
+        return text
+    # Remove asterisks, underscores, backticks, tildes
+    text = re.sub(r'[*_`~]', '', text)
+    # Replace bullet points at start of line with a comma and space for a pause
+    text = re.sub(r'(?m)^[-+*]\s+', ', ', text)
+    # Replace list numbers at start of line like "1." with "1, "
+    text = re.sub(r'(?m)^(\d+)\.\s+', r'\1, ', text)
+    # Remove hashtags
+    text = re.sub(r'#+\s*', '', text)
+    # Replace colons after words with commas for natural phrasing
+    text = re.sub(r'(\w+):\s*', r'\1, ', text)
+    return text
+
+
+class CleanOpenAILLM(openai.LLM):
+    def chat(self, *args, **kwargs):
+        stream = super().chat(*args, **kwargs)
+        
+        class CleanStream(stream.__class__):
+            async def __anext__(self):
+                chunk = await super().__anext__()
+                if chunk.delta and chunk.delta.content:
+                    chunk.delta.content = clean_speech_text(chunk.delta.content)
+                return chunk
+                
+        stream.__class__ = CleanStream
+        return stream
 
 
 HINDI_KEYWORDS = {
@@ -35,9 +69,111 @@ HINDI_KEYWORDS = {
     "ab", "kab", "tab", "sab"
 }
 
+class AssistantFnc:
+    def __init__(self, participant_identity: str = "unknown_user"):
+        self.participant_identity = participant_identity
+
+    @llm.function_tool(
+        description=(
+            "Look up a returning caller by name or ID so the agent can greet them by name "
+            "and continue from their last saved context. Never return sensitive information."
+        )
+    )
+    async def lookup_caller(self, identifier: Optional[str] = None) -> str:
+        id_to_lookup = identifier or self.participant_identity
+        caller = db.get_caller(id_to_lookup)
+        if caller:
+            return json.dumps(caller, ensure_ascii=False)
+        return "Caller not found. This is a new user."
+
+    @llm.function_tool(
+        description=(
+            "Save only non-sensitive facts about the caller after asking for explicit permission. "
+            "Never save account numbers, IDs, OTPs, UPI identifiers, PINs, or credential data."
+        )
+    )
+    async def save_caller_info(
+        self,
+        name: str,
+        language_preference: str,
+        facts: str,
+        user_id: Optional[str] = None,
+    ) -> str:
+        try:
+            facts_dict = json.loads(facts)
+        except json.JSONDecodeError:
+            facts_dict = {"notes": facts}
+
+        id_to_save = user_id or self.participant_identity
+        if not id_to_save or not name:
+            return "Missing user_id or name. Nothing was saved."
+
+        cleaned = db.sanitize_facts(facts_dict)
+        if not cleaned:
+            return "No safe facts to save. The data was sensitive or empty, so nothing was stored."
+
+        db.save_caller(id_to_save, name, language_preference, cleaned)
+        return "Saved with consent. Only non-sensitive context was stored."
+
 class Assistant(Agent):
-    def __init__(self) -> None:
+    def __init__(self, participant_identity: str) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
+        self.participant_identity = participant_identity
+
+    async def on_enter(self) -> None:
+        await super().on_enter()
+
+        # Load persistent memory for this participant
+        caller_info = db.get_caller(self.participant_identity)
+        if caller_info:
+            facts = caller_info.get("facts", {})
+            history = caller_info.get("chat_history", [])
+
+            if facts:
+                facts_str = json.dumps(facts, ensure_ascii=False)
+                self.chat_ctx.messages.append(
+                    llm.ChatMessage(
+                        role="system",
+                        content=f"User's past preferences and facts: {facts_str}",
+                    )
+                )
+
+            # Inject the last 10 messages from history to keep context small
+            if history:
+                recent_history = history[-10:]
+                for msg in recent_history:
+                    if msg.get("content"):
+                        self.chat_ctx.messages.append(
+                            llm.ChatMessage(
+                                role=msg.get("role", "user"),
+                                content=msg.get("content"),
+                                name=msg.get("name"),
+                            )
+                        )
+
+                self.chat_ctx.messages.append(
+                    llm.ChatMessage(
+                        role="system",
+                        content="Welcome back the user warmly! You just loaded your past conversation history with them.",
+                    )
+                )
+            else:
+                self.chat_ctx.messages.append(
+                    llm.ChatMessage(
+                        role="system",
+                        content="A returning user has joined the room. Please greet them warmly and ask how you can help.",
+                    )
+                )
+        else:
+            self.chat_ctx.messages.append(
+                llm.ChatMessage(
+                    role="system",
+                    content="A new user has joined the room. Please greet them warmly and ask how you can help.",
+                )
+            )
+
+        # Force the agent to generate a reply based on the new context
+        self.session.generate_reply()
 
 server = AgentServer()
 
@@ -54,6 +190,20 @@ async def my_agent(ctx: JobContext):
         "room": ctx.room.name,
     }
 
+    # Join the room and connect to the user first so remote participants are visible
+    await ctx.connect()
+
+    # Get the user's identity robustly with a brief retry/poll loop
+    import asyncio
+    participant_identity = "unknown_user"
+    for _ in range(10): # try for 1 second max
+        if ctx.room.remote_participants:
+            participant_identity = next(iter(ctx.room.remote_participants.values())).identity
+            break
+        await asyncio.sleep(0.1)
+
+    assistant_tools = AssistantFnc(participant_identity)
+
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
@@ -61,20 +211,24 @@ async def my_agent(ctx: JobContext):
         stt=deepgram.STT(model="nova-3", language="multi"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=google.LLM(
-                model="gemini-3.5-flash",
-            ),
+        llm=CleanOpenAILLM(
+            model="llama-3.1-8b-instant",
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.environ.get("GROQ_API_KEY")
+        ),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
            tts=murf.TTS(
-                voice="en-IN-anisha", 
+                voice="en-IN-anisha",
                 style="Conversation",
+                speed=15,
                 tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
                 text_pacing=True
             ),
-        turn_detection=MultilingualModel(),
+        # The turn-detector ONNX model is not reliable on Windows and crashes worker startup;
+        # leaving it out keeps the agent bootable while still using VAD for session flow.
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=True,
+        tools=llm.find_function_tools(assistant_tools),
     )
 
     @session.on("user_input_transcribed")
@@ -131,12 +285,9 @@ async def my_agent(ctx: JobContext):
     # # Start the avatar and wait for it to join
     # await avatar.start(session, room=ctx.room)
 
-    # Join the room and connect to the user
-    await ctx.connect()
-
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(),
+        agent=Assistant(participant_identity=participant_identity),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -149,6 +300,21 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
+
+    # Save chat history continuously when the conversation updates
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event):
+        # Serialize the chat history to JSON-friendly format
+        serialized_history = []
+        for msg in session.chat_ctx.messages:
+            if isinstance(msg.content, str):
+                serialized_history.append({
+                    "role": msg.role,
+                    "content": msg.content,
+                    "name": msg.name
+                })
+        # Save to DB asynchronously (or we can block, it's fast enough in SQLite)
+        db.save_chat_history(participant_identity, serialized_history)
 
 
 if __name__ == "__main__":

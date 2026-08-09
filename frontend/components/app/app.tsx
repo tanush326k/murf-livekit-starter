@@ -95,9 +95,30 @@ export function App({ appConfig }: AppProps) {
   const [selectedTopic, setSelectedTopic] = useState<TopicContent | null>(null);
 
   const tokenSource = useMemo(() => {
-    return typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string'
-      ? getSandboxTokenSource(appConfig)
-      : TokenSource.endpoint('/api/token');
+    if (typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string') {
+      return getSandboxTokenSource(appConfig);
+    }
+    return TokenSource.custom(async () => {
+      let userId = localStorage.getItem('moneybuddy_user_id');
+      if (!userId) {
+        userId = `voice_assistant_user_${Math.floor(Math.random() * 100000)}`;
+        localStorage.setItem('moneybuddy_user_id', userId);
+      }
+
+      const res = await fetch('/api/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to fetch token');
+      }
+
+      return await res.json();
+    });
   }, [appConfig]);
 
   const session = useSession(

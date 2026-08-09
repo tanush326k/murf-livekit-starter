@@ -178,6 +178,7 @@ export function MoneyBuddyAvatar({
             rx="4"
             ry="5"
             fill="currentColor"
+            opacity="1"
             animate={{
               ry: isListening ? [5, 6, 5] : isSpeaking ? [5, 4.5, 5] : 5,
               opacity: isEnded ? 0.4 : 1,
@@ -191,6 +192,7 @@ export function MoneyBuddyAvatar({
             rx="4"
             ry="5"
             fill="currentColor"
+            opacity="1"
             animate={{
               ry: isListening ? [5, 6, 5] : isSpeaking ? [5, 4.5, 5] : 5,
               opacity: isEnded ? 0.4 : 1,
@@ -207,6 +209,7 @@ export function MoneyBuddyAvatar({
               cx="40"
               cy="50"
               rx="8"
+              ry="3"
               fill="currentColor"
               opacity={0.7}
               animate={{ ry: [3, 6, 4, 7, 3] }}
@@ -221,6 +224,7 @@ export function MoneyBuddyAvatar({
               strokeWidth="2.5"
               strokeLinecap="round"
               fill="none"
+              opacity="0.7"
               animate={{
                 opacity: isEnded ? 0.3 : 0.7,
               }}
