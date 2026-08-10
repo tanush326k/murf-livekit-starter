@@ -105,6 +105,42 @@ class AssistantFnc:
         db.save_caller(id_to_save, name, language_preference, cleaned)
         return "Saved with consent. Only non-sensitive context was stored."
 
+    @llm.function_tool(
+        description=(
+            "Check user's eligibility for government schemes based on their age, annual income, and occupation. "
+            "Returns a natural language list of eligible schemes, the document checklist, and when the data was last updated. "
+            "Call this tool immediately when the user asks what schemes they qualify for. Do NOT call this tool for general questions."
+        )
+    )
+    async def check_scheme_eligibility(self, age: int, annual_income: float, occupation: str) -> str:
+        try:
+            data_path = os.path.join(os.path.dirname(__file__), "schemes_data.json")
+            with open(data_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            updated_at = data.get("updated_at", "an unknown date")
+            schemes = data.get("schemes", [])
+            
+            eligible = []
+            for s in schemes:
+                # simplified mock logic: income must be <= max_income
+                if annual_income <= s.get("max_income", float('inf')):
+                    eligible.append(s)
+            
+            if not eligible:
+                return f"Based on data updated {updated_at}, there are no schemes matching those details."
+            
+            response = f"Based on our database (updated {updated_at}), you are eligible for {len(eligible)} scheme(s): "
+            for idx, e in enumerate(eligible, 1):
+                docs = ", ".join(e.get("documents_required", []))
+                response += f"{idx}. {e['name']}. You will need these documents: {docs}. "
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Failed to load schemes data: {e}")
+            return "The scheme database is currently down. Please apologize to the user and suggest they try again later."
+
 
 class Assistant(Agent):
     def __init__(self, participant_identity: str) -> None:
