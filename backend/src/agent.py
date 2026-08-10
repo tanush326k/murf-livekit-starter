@@ -30,8 +30,8 @@ load_dotenv(".env.local")
 def clean_speech_text(text: str) -> str:
     if not text:
         return text
-    # Remove asterisks, underscores, backticks, tildes
-    text = re.sub(r'[*_`~]', '', text)
+    # Remove asterisks, underscores, backticks, tildes, parentheses
+    text = re.sub(r'[*_`~()]', '', text)
     # Replace bullet points at start of line with a comma and space for a pause
     text = re.sub(r'(?m)^[-+*]\s+', ', ', text)
     # Replace list numbers at start of line like "1." with "1, "
