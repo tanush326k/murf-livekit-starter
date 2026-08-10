@@ -77,10 +77,9 @@ class AssistantFnc:
         caller = db.get_caller(id_to_lookup)
         if caller:
             name = caller.get("name", "Unknown")
-            lang = caller.get("language_preference", "English")
             facts = caller.get("facts", {})
             facts_str = ", ".join(f"{k}: {v}" for k, v in facts.items()) if facts else "none"
-            return f"Returning caller found. Name: {name}. Language: {lang}. Past facts known: {facts_str}."
+            return f"Returning caller found. Name: {name}. Past facts known: {facts_str}."
         return "Caller not found. This is a new user."
 
     @llm.function_tool(
