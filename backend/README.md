@@ -6,6 +6,15 @@ The Python backend for the Voice Agent Starter. It runs a real-time voice AI pip
 - **Local Scheme Dataset**: Scheme eligibility uses a hand-built local JSON dataset (`src/schemes_data.json`) to demonstrate tool calling without relying on fragile external APIs.
 - **Multilingual Support**: TTS utilizes Murf's native voice mapping to handle multiple locales dynamically. The `MultilingualModel` turn-detector is intentionally omitted because it is known to crash on Windows environments; standard `silero.VAD` is used instead.
 
+## Day 5 Challenge Specifications
+
+This project implements the Day 5 function-calling challenge with the following features:
+- **Domain Data**: A scheme eligibility checker designed for the Financial Services track.
+- **Local Data Source**: Uses a hand-built local JSON dataset (`src/schemes_data.json`) to reliably demonstrate tool calling without relying on fragile external APIs. 
+- **Intelligent Triggering**: The `check_scheme_eligibility` tool description explicitly tells the model to trigger autonomously *only* when the user asks what schemes they qualify for.
+- **Spoken Fallback**: The tool wraps file loading in a try-except block. If the local dataset is missing or corrupted, the agent returns a graceful natural-language fallback (e.g. "The scheme database is currently down") instead of remaining silent or hallucinating.
+- **Data Freshness**: The tool extracts the `updated_at` timestamp from the JSON database and naturally reads it out in both success and failure paths (e.g. "Based on our database updated yesterday...").
+
 ## How It Works
 
 
