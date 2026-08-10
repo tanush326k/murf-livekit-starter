@@ -43,7 +43,7 @@ def clean_speech_text(text: str) -> str:
     # Strip LLM tool call leakage (e.g. from Llama-3)
     text = re.sub(r'\(function=[a-zA-Z_]+>[^)]*\)?', '', text)
     text = re.sub(r'\{[^{}]*\}', '', text) # Strip raw JSON objects just in case
-    return text.strip()
+    return text
 
 
 class CleanOpenAILLM(openai.LLM):
