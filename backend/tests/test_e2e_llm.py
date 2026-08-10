@@ -35,7 +35,7 @@ async def run_e2e_test():
         chat_ctx.append(text=SYSTEM_PROMPT, role="system")
         chat_ctx.append(text="I am a 30 year old farmer with 200000 income. What government schemes am I eligible for?", role="user")
 
-    stream = model.chat(chat_ctx=chat_ctx, fnc_ctx=func_tools)
+    stream = model.chat(chat_ctx=chat_ctx, tools=func_tools)
     response = ""
     async for chunk in stream:
         if chunk.delta.content:

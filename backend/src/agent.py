@@ -134,7 +134,7 @@ class AssistantFnc:
                     eligible.append(s)
             
             if not eligible:
-                return f"Based on data updated {updated_at}, there are no schemes matching those details."
+                return f"Based on our database (updated {updated_at}), I couldn't find any specific schemes for those details."
             
             response = f"Based on our database (updated {updated_at}), you are eligible for {len(eligible)} scheme(s): "
             for idx, e in enumerate(eligible, 1):
