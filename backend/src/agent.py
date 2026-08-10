@@ -58,16 +58,6 @@ class CleanOpenAILLM(openai.LLM):
         return stream
 
 
-HINDI_KEYWORDS = {
-    "kya", "hai", "aur", "main", "haan", "nahin", "aap",
-    "namaste", "shukriya", "yojana", "batao", "bataiye",
-    "samjhao", "dhan", "suraksha", "bima", "pension",
-    "mein", "ke", "ki", "se", "ko", "ka", "jo", "toh",
-    "bhi", "ho", "kar", "raha", "rahi", "rha", "rhi",
-    "mujhe", "mera", "meri", "hum", "tum", "apna", "apni",
-    "karke", "karo", "karna", "tha", "thi", "the",
-    "ab", "kab", "tab", "sab"
-}
 
 class AssistantFnc:
     def __init__(self, participant_identity: str = "unknown_user"):
@@ -115,6 +105,7 @@ class AssistantFnc:
         db.save_caller(id_to_save, name, language_preference, cleaned)
         return "Saved with consent. Only non-sensitive context was stored."
 
+
 class Assistant(Agent):
     def __init__(self, participant_identity: str) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
@@ -122,55 +113,16 @@ class Assistant(Agent):
 
     async def on_enter(self) -> None:
         await super().on_enter()
-
-        # Load persistent memory for this participant
-        caller_info = db.get_caller(self.participant_identity)
-        if caller_info:
-            facts = caller_info.get("facts", {})
-            history = caller_info.get("chat_history", [])
-
-            if facts:
-                facts_str = json.dumps(facts, ensure_ascii=False)
-                self.chat_ctx.messages.append(
-                    llm.ChatMessage(
-                        role="system",
-                        content=f"User's past preferences and facts: {facts_str}",
-                    )
-                )
-
-            # Inject the last 10 messages from history to keep context small
-            if history:
-                recent_history = history[-10:]
-                for msg in recent_history:
-                    if msg.get("content"):
-                        self.chat_ctx.messages.append(
-                            llm.ChatMessage(
-                                role=msg.get("role", "user"),
-                                content=msg.get("content"),
-                                name=msg.get("name"),
-                            )
-                        )
-
-                self.chat_ctx.messages.append(
-                    llm.ChatMessage(
-                        role="system",
-                        content="Welcome back the user warmly! You just loaded your past conversation history with them.",
-                    )
-                )
-            else:
-                self.chat_ctx.messages.append(
-                    llm.ChatMessage(
-                        role="system",
-                        content="A returning user has joined the room. Please greet them warmly and ask how you can help.",
-                    )
-                )
-        else:
-            self.chat_ctx.messages.append(
-                llm.ChatMessage(
-                    role="system",
-                    content="A new user has joined the room. Please greet them warmly and ask how you can help.",
+        self.chat_ctx.messages.append(
+            llm.ChatMessage(
+                role="system",
+                content=(
+                    "A user has joined the room. You MUST immediately call `lookup_caller` to see if they "
+                    "are a returning user with saved preferences or past context. "
+                    "If they are a new user, greet them warmly. If they are returning, greet them by name using the retrieved data."
                 )
             )
+        )
 
         # Force the agent to generate a reply based on the new context
         self.session.generate_reply()
@@ -219,7 +171,7 @@ async def my_agent(ctx: JobContext):
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
            tts=murf.TTS(
-                voice="en-IN-anisha",
+                voice="Anisha",
                 style="Conversation",
                 speed=15,
                 tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
@@ -230,42 +182,6 @@ async def my_agent(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
         tools=llm.find_function_tools(assistant_tools),
     )
-
-    @session.on("user_input_transcribed")
-    def on_user_input_transcribed(ev: UserInputTranscribedEvent):
-        transcript = ev.transcript.strip().lower()
-
-        if not transcript:
-            return
-
-        # Detect Devanagari (Hindi script)
-        has_devanagari = any(
-            0x0900 <= ord(ch) <= 0x097F
-            for ch in transcript
-        )
-
-        # Detect Hinglish keywords
-        words = set(transcript.split())
-        has_hindi_words = not words.isdisjoint(HINDI_KEYWORDS)
-
-        if has_devanagari or has_hindi_words:
-            logger.info(
-                f"Detected Hindi/Hinglish: {ev.transcript}"
-            )
-
-            # Change voice if supported
-            session.tts.update_options(
-                voice="hi-IN-anisha"
-            )
-
-        else:
-            logger.info(
-                f"Detected English: {ev.transcript}"
-            )
-
-            session.tts.update_options(
-                voice="en-IN-anisha"
-            )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))

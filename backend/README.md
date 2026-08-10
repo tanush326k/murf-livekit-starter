@@ -2,7 +2,11 @@
 
 The Python backend for the Voice Agent Starter. It runs a real-time voice AI pipeline using [LiveKit Agents](https://docs.livekit.io/agents), connecting Murf Falcon TTS, Deepgram STT, and Google Gemini into a single conversational agent.
 
+## Notes on Features
+- **Multilingual Support**: TTS utilizes Murf's native voice mapping to handle multiple locales dynamically. The `MultilingualModel` turn-detector is intentionally omitted because it is known to crash on Windows environments; standard `silero.VAD` is used instead.
+
 ## How It Works
+
 
 ```
 User speaks → [Deepgram STT] → text → [Gemini LLM] → response → [Murf Falcon TTS] → audio → User hears
