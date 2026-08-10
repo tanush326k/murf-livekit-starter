@@ -27,8 +27,13 @@ async def run_e2e_test():
     )
 
     chat_ctx = llm.ChatContext()
-    chat_ctx.messages.append(llm.ChatMessage.create(text=SYSTEM_PROMPT, role="system"))
-    chat_ctx.messages.append(llm.ChatMessage.create(text="I am a 30 year old farmer with 200000 income. What government schemes am I eligible for?", role="user"))
+    # Adding messages might vary by SDK version, try the robust approach
+    if hasattr(chat_ctx, "messages") and not callable(chat_ctx.messages):
+        chat_ctx.messages.append(llm.ChatMessage(text=SYSTEM_PROMPT, role="system"))
+        chat_ctx.messages.append(llm.ChatMessage(text="I am a 30 year old farmer with 200000 income. What government schemes am I eligible for?", role="user"))
+    elif hasattr(chat_ctx, "append"):
+        chat_ctx.append(text=SYSTEM_PROMPT, role="system")
+        chat_ctx.append(text="I am a 30 year old farmer with 200000 income. What government schemes am I eligible for?", role="user")
 
     stream = model.chat(chat_ctx=chat_ctx, fnc_ctx=func_tools)
     response = ""

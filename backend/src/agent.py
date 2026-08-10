@@ -40,7 +40,10 @@ def clean_speech_text(text: str) -> str:
     text = re.sub(r'#+\s*', '', text)
     # Replace colons after words with commas for natural phrasing
     text = re.sub(r'(\w+):\s*', r'\1, ', text)
-    return text
+    # Strip LLM tool call leakage (e.g. from Llama-3)
+    text = re.sub(r'\(function=[a-zA-Z_]+>[^)]*\)?', '', text)
+    text = re.sub(r'\{[^{}]*\}', '', text) # Strip raw JSON objects just in case
+    return text.strip()
 
 
 class CleanOpenAILLM(openai.LLM):
@@ -147,24 +150,8 @@ class AssistantFnc:
 
 class Assistant(Agent):
     def __init__(self, participant_identity: str) -> None:
-        super().__init__(instructions=SYSTEM_PROMPT)
+        super().__init__(instructions=SYSTEM_PROMPT + "\n[SYSTEM EVENT] A user has just joined the room. You MUST immediately call `lookup_caller` to see if they are returning. Greet them by name if found.")
         self.participant_identity = participant_identity
-
-    async def on_enter(self) -> None:
-        await super().on_enter()
-        self.chat_ctx.messages.append(
-            llm.ChatMessage(
-                role="system",
-                content=(
-                    "A user has joined the room. You MUST immediately call `lookup_caller` to see if they "
-                    "are a returning user with saved preferences or past context. "
-                    "If they are a new user, greet them warmly. If they are returning, greet them by name using the retrieved data."
-                )
-            )
-        )
-
-        # Force the agent to generate a reply based on the new context
-        self.session.generate_reply()
 
 server = AgentServer()
 
@@ -255,6 +242,9 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
+    
+    # Force the agent to generate a reply based on the new context
+    session.generate_reply()
 
     # Save chat history continuously when the conversation updates
     @session.on("conversation_item_added")
