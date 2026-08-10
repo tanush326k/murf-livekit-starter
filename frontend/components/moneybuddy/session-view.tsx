@@ -83,7 +83,7 @@ export function MoneyBuddySessionView({
   const controls: AgentControlBarControls = {
     leave: true,
     microphone: true,
-    chat: false,
+    chat: true,
     camera: false,
     screenShare: false,
   };

@@ -73,7 +73,11 @@ class AssistantFnc:
         id_to_lookup = identifier or self.participant_identity
         caller = db.get_caller(id_to_lookup)
         if caller:
-            return json.dumps(caller, ensure_ascii=False)
+            name = caller.get("name", "Unknown")
+            lang = caller.get("language_preference", "English")
+            facts = caller.get("facts", {})
+            facts_str = ", ".join(f"{k}: {v}" for k, v in facts.items()) if facts else "none"
+            return f"Returning caller found. Name: {name}. Language: {lang}. Past facts known: {facts_str}."
         return "Caller not found. This is a new user."
 
     @llm.function_tool(
@@ -87,16 +91,15 @@ class AssistantFnc:
         name: str,
         language_preference: str,
         facts: str,
-        user_id: Optional[str] = None,
     ) -> str:
         try:
             facts_dict = json.loads(facts)
         except json.JSONDecodeError:
             facts_dict = {"notes": facts}
 
-        id_to_save = user_id or self.participant_identity
+        id_to_save = self.participant_identity
         if not id_to_save or not name:
-            return "Missing user_id or name. Nothing was saved."
+            return "Missing name. Nothing was saved."
 
         cleaned = db.sanitize_facts(facts_dict)
         if not cleaned:
