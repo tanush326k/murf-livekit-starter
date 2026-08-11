@@ -170,10 +170,10 @@ async def my_agent(ctx: JobContext):
     # Join the room and connect to the user first so remote participants are visible
     await ctx.connect()
 
-    # Get the user's identity robustly with a brief retry/poll loop
+    # Wait up to 60 seconds for the SIP caller to answer and join the room
     import asyncio
     participant_identity = "unknown_user"
-    for _ in range(10): # try for 1 second max
+    for _ in range(600): # wait for 60 seconds max
         if ctx.room.remote_participants:
             participant_identity = next(iter(ctx.room.remote_participants.values())).identity
             break
@@ -185,7 +185,7 @@ async def my_agent(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-3", language="multi"),
+        stt=deepgram.STT(model="nova-2", language="multi"),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm=CleanOpenAILLM(
@@ -241,10 +241,11 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
-    
     # Force the agent to generate a reply based on the new context
-    session.generate_reply()
-
+    logger.info("Triggering initial greeting...")
+    session.generate_reply(
+        instructions="Greet the caller, say who you are, why you're calling, and how to opt out."
+    )
     # Save chat history continuously when the conversation updates
     @session.on("conversation_item_added")
     def on_conversation_item_added(event):

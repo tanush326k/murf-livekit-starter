@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import time
 from dotenv import load_dotenv
 from livekit import api
 
@@ -12,16 +13,16 @@ async def main():
     api_key = os.getenv("LIVEKIT_API_KEY")
     api_secret = os.getenv("LIVEKIT_API_SECRET")
     sip_trunk_id = os.getenv("LIVEKIT_SIP_TRUNK_ID")
-    destination_number = os.getenv("LINPHONE_SIP_URI")
+    destination_number = os.getenv("DESTINATION_PHONE_NUMBER")
     
     # We use a specific room name for the outbound call.
     # When the agent runs, it should connect to this room if not using dispatch,
     # or if using dispatch, LiveKit will start the agent in this room.
-    room_name = "outbound-room"
+    room_name = f"outbound-call-{int(time.time())}"
 
     if not all([livekit_url, api_key, api_secret, sip_trunk_id, destination_number]):
         print("Missing required environment variables. Please check .env.local.")
-        print("Ensure LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_SIP_TRUNK_ID, and LINPHONE_SIP_URI are set.")
+        print("Ensure LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_SIP_TRUNK_ID, and DESTINATION_PHONE_NUMBER are set.")
         sys.exit(1)
 
     # Initialize LiveKit API
@@ -43,10 +44,19 @@ async def main():
             sip_call_to=call_to,
             room_name=room_name,
             participant_identity="sip-caller",
-            participant_name="User"
+            participant_name="User",
+            wait_until_answered=True
         )
         
         await lk_api.sip.create_sip_participant(req)
+        
+        # Dispatch the agent to the room explicitly
+        print(f"Dispatching agent to room {room_name}...")
+        dispatch_req = api.CreateAgentDispatchRequest(
+            agent_name="my-agent",
+            room=room_name
+        )
+        await lk_api.agent_dispatch.create_dispatch(dispatch_req)
         
         print(f"Call initiated successfully.")
         print(f"The agent should join the room '{room_name}' to interact with the user.")
