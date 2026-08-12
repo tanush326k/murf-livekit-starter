@@ -4,6 +4,8 @@ import logging
 import os
 import re
 import sqlite3
+import threading
+import urllib.request
 from datetime import datetime
 from typing import Any, Optional
 
@@ -36,6 +38,39 @@ SENSITIVE_KEY_PATTERNS = (
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.strip().lower().replace(" ", "_")
     return any(pattern in normalized for pattern in SENSITIVE_KEY_PATTERNS)
+
+
+def _send_discord_webhook(payload: dict):
+    url = "https://discord.com/api/webhooks/1537072561148534794/aeyMOmMitjOUwsT01PKp5T4l0J662mB8dqPZbuiUdiVDA1Lr1XCg6BWZAS0Fo0IhVNKv"
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'User-Agent': 'MoneyBuddy/1.0'}
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        logger.error("Failed to send Discord webhook: %s", e)
+
+
+def notify_discord(reference_id, caller_name, reason, summary, what_checked, urgency, language, preferred_followup):
+    color = 16711680 if str(urgency).lower() in ["high", "emergency"] else 3447003
+    payload = {
+        "content": "🚨 **New Escalation Ticket Created** 🚨" if str(urgency).lower() in ["high", "emergency"] else "🎫 **New Escalation Ticket**",
+        "embeds": [{
+            "title": f"Ticket: {reference_id}",
+            "color": color,
+            "fields": [
+                {"name": "Caller Name", "value": str(caller_name) or "Unknown", "inline": True},
+                {"name": "Urgency", "value": str(urgency) or "Unknown", "inline": True},
+                {"name": "Reason", "value": str(reason) or "Not provided"},
+                {"name": "Summary", "value": str(summary) or "Not provided"},
+                {"name": "What was checked", "value": str(what_checked) or "Not provided"},
+                {"name": "Follow-up via", "value": f"{preferred_followup} ({language})"}
+            ]
+        }]
+    }
+    threading.Thread(target=_send_discord_webhook, args=(payload,), daemon=True).start()
 
 
 def sanitize_text(text: str) -> str:
@@ -241,6 +276,7 @@ def create_escalation(
         conn.commit()
         conn.close()
         logger.info("Updated escalation %s for caller %s", reference_id, caller_name)
+        notify_discord(reference_id, caller_name, "[UPDATE] " + safe_reason, new_summary, safe_what_checked, urgency, language, preferred_followup)
         return reference_id
 
     today = datetime.now().strftime("%Y%m%d")
@@ -277,6 +313,7 @@ def create_escalation(
     conn.commit()
     conn.close()
     logger.info("Created escalation %s for caller %s", reference_id, caller_name)
+    notify_discord(reference_id, caller_name, safe_reason, safe_summary, safe_what_checked, urgency, language, preferred_followup)
     return reference_id
 
 
