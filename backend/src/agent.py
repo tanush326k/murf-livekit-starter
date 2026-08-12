@@ -148,8 +148,8 @@ class AssistantFnc:
 
     @llm.function_tool(
         description=(
-            "Create a human-help escalation request when the caller reports possible fraud, scam, "
-            "unauthorized transactions, or needs a financial decision that requires human judgment. "
+            "Create a human-help escalation request when the caller reports: "
+            "1) possible fraud or unauthorized activity, or 2) lost or stolen credit card. "
             "Urgency levels can be 'low', 'medium', 'high', or 'emergency'. "
             "CRITICAL: You MUST ask the caller for explicit permission BEFORE calling this tool. "
             "If the caller says no, do NOT call this tool. "
@@ -178,22 +178,10 @@ class AssistantFnc:
         )
         return (
             f"Escalation created successfully. Reference ID is {reference_id}. "
-            f"Tell the caller their reference ID is {reference_id}. "
-            f"A human support team member can review the request and follow up "
-            f"using the caller's preferred method. Do not promise an immediate response."
+            f"Tell the caller their request has been escalated to a human agent, and their "
+            f"reference ID for tracking purposes is {reference_id}. "
+            f"Explain that a human team member will review it, but do NOT promise they will reply immediately."
         )
-
-    @llm.function_tool(
-        description=(
-            "Check the status of an existing escalation request using its reference ID. "
-            "Use this when a user asks for an update on their previous escalation."
-        )
-    )
-    async def check_escalation_status(self, reference_id: str) -> str:
-        status = db.get_escalation_status(reference_id)
-        if status == "unknown":
-            return f"No escalation request found with reference ID {reference_id}."
-        return f"The status of request {reference_id} is: {status}."
 
 
 class Assistant(Agent):

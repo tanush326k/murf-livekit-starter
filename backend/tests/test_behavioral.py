@@ -185,17 +185,6 @@ async def run_tests():
     
     print("[Passed]")
 
-    # 9. Check Escalation Status
-    print("\n[Test 9] Check Escalation Status")
-    status_res = await fnc_esc.check_escalation_status(ref_id)
-    print(f"Status Result: {status_res}")
-    assert "open" in status_res
-
-    # Check unknown status
-    unknown_res = await fnc_esc.check_escalation_status("MB-INVALID")
-    assert "No escalation request found" in unknown_res
-    print("[Passed]")
-
     # Clean up test escalation records
     conn = db.sqlite3.connect(db.DB_PATH)
     conn.execute("DELETE FROM escalations WHERE caller_id LIKE 'test_%'")
