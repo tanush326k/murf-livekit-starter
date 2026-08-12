@@ -146,6 +146,55 @@ class AssistantFnc:
             logger.error(f"Failed to load schemes data: {e}")
             return "The scheme database is currently down. Please apologize to the user and suggest they try again later."
 
+    @llm.function_tool(
+        description=(
+            "Create a human-help escalation request when the caller reports possible fraud, scam, "
+            "unauthorized transactions, or needs a financial decision that requires human judgment. "
+            "Urgency levels can be 'low', 'medium', 'high', or 'emergency'. "
+            "CRITICAL: You MUST ask the caller for explicit permission BEFORE calling this tool. "
+            "If the caller says no, do NOT call this tool. "
+            "Never include passwords, OTPs, PINs, full account numbers, card numbers, CVV, Aadhaar, or PAN."
+        )
+    )
+    async def create_escalation(
+        self,
+        caller_name: str,
+        reason: str,
+        summary: str,
+        what_checked: str,
+        urgency: str,
+        language: str,
+        preferred_followup: str,
+    ) -> str:
+        reference_id = db.create_escalation(
+            caller_id=self.participant_identity,
+            caller_name=caller_name,
+            reason=reason,
+            summary=summary,
+            what_checked=what_checked,
+            urgency=urgency,
+            language=language,
+            preferred_followup=preferred_followup,
+        )
+        return (
+            f"Escalation created successfully. Reference ID is {reference_id}. "
+            f"Tell the caller their reference ID is {reference_id}. "
+            f"A human support team member can review the request and follow up "
+            f"using the caller's preferred method. Do not promise an immediate response."
+        )
+
+    @llm.function_tool(
+        description=(
+            "Check the status of an existing escalation request using its reference ID. "
+            "Use this when a user asks for an update on their previous escalation."
+        )
+    )
+    async def check_escalation_status(self, reference_id: str) -> str:
+        status = db.get_escalation_status(reference_id)
+        if status == "unknown":
+            return f"No escalation request found with reference ID {reference_id}."
+        return f"The status of request {reference_id} is: {status}."
+
 
 class Assistant(Agent):
     def __init__(self, participant_identity: str) -> None:
