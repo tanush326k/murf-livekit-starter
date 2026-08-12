@@ -66,85 +66,6 @@ class AssistantFnc:
     def __init__(self, participant_identity: str = "unknown_user"):
         self.participant_identity = participant_identity
 
-    @llm.function_tool(
-        description=(
-            "Look up a returning caller by name or ID so the agent can greet them by name "
-            "and continue from their last saved context. Never return sensitive information."
-        )
-    )
-    async def lookup_caller(self, identifier: Optional[str] = None) -> str:
-        id_to_lookup = identifier or self.participant_identity
-        caller = db.get_caller(id_to_lookup)
-        if caller:
-            name = caller.get("name", "Unknown")
-            facts = caller.get("facts", {})
-            facts_str = ", ".join(f"{k}: {v}" for k, v in facts.items()) if facts else "none"
-            return f"Returning caller found. Name: {name}. Past facts known: {facts_str}."
-        return "Caller not found. This is a new user."
-
-    @llm.function_tool(
-        description=(
-            "Save only non-sensitive facts about the caller after asking for explicit permission. "
-            "Never save account numbers, IDs, OTPs, UPI identifiers, PINs, or credential data."
-        )
-    )
-    async def save_caller_info(
-        self,
-        name: str,
-        language_preference: str,
-        facts: str,
-    ) -> str:
-        try:
-            facts_dict = json.loads(facts)
-        except json.JSONDecodeError:
-            facts_dict = {"notes": facts}
-
-        id_to_save = self.participant_identity
-        if not id_to_save or not name:
-            return "Missing name. Nothing was saved."
-
-        cleaned = db.sanitize_facts(facts_dict)
-        if not cleaned:
-            return "No safe facts to save. The data was sensitive or empty, so nothing was stored."
-
-        db.save_caller(id_to_save, name, language_preference, cleaned)
-        return "Saved with consent. Only non-sensitive context was stored."
-
-    @llm.function_tool(
-        description=(
-            "Check user's eligibility for government schemes based on their age, annual income, and occupation. "
-            "Returns a natural language list of eligible schemes, the document checklist, and when the data was last updated. "
-            "Call this tool immediately when the user asks what schemes they qualify for. Do NOT call this tool for general questions."
-        )
-    )
-    async def check_scheme_eligibility(self, age: int, annual_income: float, occupation: str) -> str:
-        try:
-            data_path = os.path.join(os.path.dirname(__file__), "schemes_data.json")
-            with open(data_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            updated_at = data.get("updated_at", "an unknown date")
-            schemes = data.get("schemes", [])
-            
-            eligible = []
-            for s in schemes:
-                # simplified mock logic: income must be <= max_income
-                if annual_income <= s.get("max_income", float('inf')):
-                    eligible.append(s)
-            
-            if not eligible:
-                return f"Based on our database (updated {updated_at}), I couldn't find any specific schemes for those details."
-            
-            response = f"Based on our database (updated {updated_at}), you are eligible for {len(eligible)} scheme(s): "
-            for idx, e in enumerate(eligible, 1):
-                docs = ", ".join(e.get("documents_required", []))
-                response += f"{idx}. {e['name']}. You will need these documents: {docs}. "
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Failed to load schemes data: {e}")
-            return "The scheme database is currently down. Please apologize to the user and suggest they try again later."
 
     @llm.function_tool(
         description=(
@@ -188,7 +109,7 @@ class AssistantFnc:
 
 class Assistant(Agent):
     def __init__(self, participant_identity: str) -> None:
-        super().__init__(instructions=SYSTEM_PROMPT + "\n[SYSTEM EVENT] A user has just joined the room. You MUST immediately call `lookup_caller` to see if they are returning. Greet them by name if found.")
+        super().__init__(instructions=SYSTEM_PROMPT)
         self.participant_identity = participant_identity
 
 server = AgentServer()
@@ -280,25 +201,12 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
-    # Force the agent to generate a reply based on the new context
+    # Force the agent to generate a reply
     logger.info("Triggering initial greeting...")
     session.generate_reply(
-        instructions="Greet the caller, say who you are, why you're calling, and how to opt out."
+        instructions="Greet the caller naturally as MoneyBuddy."
     )
-    # Save chat history continuously when the conversation updates
-    @session.on("conversation_item_added")
-    def on_conversation_item_added(event):
-        # Serialize the chat history to JSON-friendly format
-        serialized_history = []
-        for msg in session.chat_ctx.messages:
-            if isinstance(msg.content, str):
-                serialized_history.append({
-                    "role": msg.role,
-                    "content": msg.content,
-                    "name": msg.name
-                })
-        # Save to DB asynchronously (or we can block, it's fast enough in SQLite)
-        db.save_chat_history(participant_identity, serialized_history)
+
 
 
 if __name__ == "__main__":
