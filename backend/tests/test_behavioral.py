@@ -76,6 +76,7 @@ async def run_tests():
         urgency="High",
         language="English",
         preferred_followup="Phone call",
+        callback_time="Today afternoon",
     )
     print(f"Escalation Result: {res}")
 
@@ -158,6 +159,7 @@ async def run_tests():
         urgency="Emergency",
         language="English",
         preferred_followup="Email",
+        callback_time="Immediately",
     )
     print(f"Escalation Result (Deduplication): {res}")
     

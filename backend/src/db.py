@@ -9,6 +9,10 @@ import urllib.request
 from datetime import datetime
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+
+load_dotenv(".env.local")
+
 logger = logging.getLogger("db")
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "callers.db"))
@@ -41,7 +45,10 @@ def _is_sensitive_key(key: str) -> bool:
 
 
 def _send_discord_webhook(payload: dict):
-    url = "https://discord.com/api/webhooks/1537072561148534794/aeyMOmMitjOUwsT01PKp5T4l0J662mB8dqPZbuiUdiVDA1Lr1XCg6BWZAS0Fo0IhVNKv"
+    url = os.environ.get("DISCORD_HUMAN_SUPPORT_WEBHOOK_URL")
+    if not url:
+        logger.warning("DISCORD_HUMAN_SUPPORT_WEBHOOK_URL not set in environment.")
+        return
     try:
         req = urllib.request.Request(
             url,
@@ -53,7 +60,7 @@ def _send_discord_webhook(payload: dict):
         logger.error("Failed to send Discord webhook: %s", e)
 
 
-def notify_discord(reference_id, caller_name, reason, summary, what_checked, urgency, language, preferred_followup):
+def notify_discord(reference_id, caller_name, reason, summary, what_checked, urgency, language, preferred_followup, callback_time):
     color = 16711680 if str(urgency).lower() in ["high", "emergency"] else 3447003
     payload = {
         "content": "🚨 **New Escalation Ticket Created** 🚨" if str(urgency).lower() in ["high", "emergency"] else "🎫 **New Escalation Ticket**",
@@ -66,7 +73,8 @@ def notify_discord(reference_id, caller_name, reason, summary, what_checked, urg
                 {"name": "Reason", "value": str(reason) or "Not provided"},
                 {"name": "Summary", "value": str(summary) or "Not provided"},
                 {"name": "What was checked", "value": str(what_checked) or "Not provided"},
-                {"name": "Follow-up via", "value": f"{preferred_followup} ({language})"}
+                {"name": "Follow-up via", "value": f"{preferred_followup} ({language})"},
+                {"name": "Callback Time", "value": str(callback_time) or "Not provided"}
             ]
         }]
     }
@@ -144,11 +152,15 @@ def init_db():
             urgency TEXT,
             language TEXT,
             preferred_followup TEXT,
+            callback_time TEXT,
             status TEXT DEFAULT 'open',
             created_at TIMESTAMP
         )
         """
     )
+    
+    with contextlib.suppress(sqlite3.OperationalError):
+        cursor.execute("ALTER TABLE escalations ADD COLUMN callback_time TEXT")
 
     conn.commit()
     conn.close()
@@ -243,6 +255,7 @@ def create_escalation(
     urgency: str,
     language: str,
     preferred_followup: str,
+    callback_time: str,
 ) -> str:
     """Create a human-help escalation request. Updates existing if open."""
     conn = sqlite3.connect(DB_PATH)
@@ -268,15 +281,15 @@ def create_escalation(
         cursor.execute(
             """
             UPDATE escalations 
-            SET summary = ?, what_checked = ?, urgency = ?, language = ?, preferred_followup = ?
+            SET summary = ?, what_checked = ?, urgency = ?, language = ?, preferred_followup = ?, callback_time = ?
             WHERE reference_id = ?
             """,
-            (new_summary, safe_what_checked, urgency, language, preferred_followup, reference_id)
+            (new_summary, safe_what_checked, urgency, language, preferred_followup, callback_time, reference_id)
         )
         conn.commit()
         conn.close()
         logger.info("Updated escalation %s for caller %s", reference_id, caller_name)
-        notify_discord(reference_id, caller_name, "[UPDATE] " + safe_reason, new_summary, safe_what_checked, urgency, language, preferred_followup)
+        notify_discord(reference_id, caller_name, "[UPDATE] " + safe_reason, new_summary, safe_what_checked, urgency, language, preferred_followup, callback_time)
         return reference_id
 
     today = datetime.now().strftime("%Y%m%d")
@@ -290,11 +303,11 @@ def create_escalation(
     reference_id = f"MB-{today}-{count + 1:03d}"
 
     cursor.execute(
-        """
+            """
         INSERT INTO escalations
             (reference_id, caller_id, caller_name, reason, summary,
-             what_checked, urgency, language, preferred_followup, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+             what_checked, urgency, language, preferred_followup, callback_time, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
         """,
         (
             reference_id,
@@ -306,6 +319,7 @@ def create_escalation(
             urgency,
             language,
             preferred_followup,
+            callback_time,
             now,
         ),
     )
@@ -313,7 +327,7 @@ def create_escalation(
     conn.commit()
     conn.close()
     logger.info("Created escalation %s for caller %s", reference_id, caller_name)
-    notify_discord(reference_id, caller_name, safe_reason, safe_summary, safe_what_checked, urgency, language, preferred_followup)
+    notify_discord(reference_id, caller_name, safe_reason, safe_summary, safe_what_checked, urgency, language, preferred_followup, callback_time)
     return reference_id
 
 
@@ -325,7 +339,7 @@ def get_open_escalations() -> list[dict[str, Any]]:
     cursor.execute(
         """
         SELECT reference_id, caller_name, reason, summary, what_checked,
-               urgency, language, preferred_followup, status, created_at
+               urgency, language, preferred_followup, callback_time, status, created_at
         FROM escalations
         ORDER BY created_at DESC
         """
@@ -344,8 +358,9 @@ def get_open_escalations() -> list[dict[str, Any]]:
             "urgency": r[5],
             "language": r[6],
             "preferred_followup": r[7],
-            "status": r[8],
-            "created_at": r[9],
+            "callback_time": r[8],
+            "status": r[9],
+            "created_at": r[10],
         }
         for r in rows
     ]

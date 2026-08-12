@@ -165,6 +165,7 @@ class AssistantFnc:
         urgency: str,
         language: str,
         preferred_followup: str,
+        callback_time: str,
     ) -> str:
         reference_id = db.create_escalation(
             caller_id=self.participant_identity,
@@ -175,6 +176,7 @@ class AssistantFnc:
             urgency=urgency,
             language=language,
             preferred_followup=preferred_followup,
+            callback_time=callback_time,
         )
         return (
             f"Escalation created successfully. Reference ID is {reference_id}. "
