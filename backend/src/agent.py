@@ -18,7 +18,7 @@ from livekit.agents import (
     room_io,
     tokenize,
 )
-from livekit.plugins import deepgram, murf, noise_cancellation, openai, silero
+from livekit.plugins import deepgram, google, murf, noise_cancellation, openai, silero
 
 import db
 from prompt import SYSTEM_PROMPT
@@ -61,10 +61,44 @@ class CleanOpenAILLM(openai.LLM):
         return stream
 
 
+class CleanGoogleLLM(google.LLM):
+    def chat(self, *args, **kwargs):
+        stream = super().chat(*args, **kwargs)
+        
+        class CleanStream(stream.__class__):
+            async def __anext__(self):
+                chunk = await super().__anext__()
+                if chunk.delta and chunk.delta.content:
+                    chunk.delta.content = clean_speech_text(chunk.delta.content)
+                return chunk
+                
+        stream.__class__ = CleanStream
+        return stream
+
+
 
 class AssistantFnc:
-    def __init__(self, participant_identity: str = "unknown_user"):
+    def __init__(self, participant_identity: str = "unknown_user", session_shutdown_cb = None):
         self.participant_identity = participant_identity
+        self.session_shutdown_cb = session_shutdown_cb
+
+    @llm.function_tool(
+        description="Opt the caller out of future outbound calls and terminate the call immediately. Call this when the user says they want to stop receiving calls, opt out, or stop these calls."
+    )
+    async def opt_out(self) -> str:
+        if self.session_shutdown_cb:
+            import asyncio
+            asyncio.create_task(self.session_shutdown_cb())
+        return "Opt-out request processed. The call is terminating now. Goodbye."
+
+    @llm.function_tool(
+        description="Terminate the call immediately. Call this when the user says NO to hearing more details, or says goodbye to end the conversation."
+    )
+    async def terminate_call(self) -> str:
+        if self.session_shutdown_cb:
+            import asyncio
+            asyncio.create_task(self.session_shutdown_cb())
+        return "Call termination initiated."
 
     @llm.function_tool(
         description=(
@@ -179,32 +213,27 @@ async def my_agent(ctx: JobContext):
             break
         await asyncio.sleep(0.1)
 
-    assistant_tools = AssistantFnc(participant_identity)
+    async def shutdown_session():
+        await asyncio.sleep(4.0)
+        await session.aclose()
+
+    assistant_tools = AssistantFnc(participant_identity, session_shutdown_cb=shutdown_session)
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=deepgram.STT(model="nova-2", language="multi"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=CleanOpenAILLM(
-            model="llama-3.1-8b-instant",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=os.environ.get("GROQ_API_KEY")
+        stt=deepgram.STT(model="nova-3", language="multi"),
+        llm=CleanGoogleLLM(
+            model="gemini-3.5-flash-lite",
+            api_key=os.environ.get("GOOGLE_API_KEY")
         ),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-           tts=murf.TTS(
-                voice="Anisha",
-                style="Conversation",
-                speed=15,
-                tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
-                text_pacing=True
-            ),
-        # The turn-detector ONNX model is not reliable on Windows and crashes worker startup;
-        # leaving it out keeps the agent bootable while still using VAD for session flow.
+        tts=murf.TTS(
+            voice="Anisha",
+            style="Conversation",
+            tokenizer=tokenize.basic.SentenceTokenizer(min_sentence_len=2),
+            text_pacing=True,
+        ),
         vad=ctx.proc.userdata["vad"],
+        preemptive_generation=True,
         tools=llm.find_function_tools(assistant_tools),
     )
 
@@ -241,23 +270,29 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
-    # Force the agent to generate a reply based on the new context
+    # Wait a moment for media/RTP channels to establish on SIP calls
+    await asyncio.sleep(2.0)
+    # Force the agent to generate a reply
     logger.info("Triggering initial greeting...")
     session.generate_reply(
-        instructions="Greet the caller, say who you are, why you're calling, and how to opt out."
+        instructions="Greet the caller in English by saying exactly: 'Hello, this is MoneyBuddy, I'm calling because a financial scheme you may already be eligible for has an upcoming deadline, would you like to know more, you can say yes or no, and you can tell me if you don't want to receive these calls.'",
+        allow_interruptions=False,
+        tool_choice="none"
     )
     # Save chat history continuously when the conversation updates
     @session.on("conversation_item_added")
     def on_conversation_item_added(event):
         # Serialize the chat history to JSON-friendly format
         serialized_history = []
-        for msg in session.chat_ctx.messages:
-            if isinstance(msg.content, str):
-                serialized_history.append({
-                    "role": msg.role,
-                    "content": msg.content,
-                    "name": msg.name
-                })
+        chat_context = getattr(session, "chat_ctx", None) or getattr(session, "_chat_ctx", None)
+        if chat_context:
+            for msg in chat_context.messages():
+                if isinstance(msg.content, str):
+                    serialized_history.append({
+                        "role": msg.role,
+                        "content": msg.content,
+                        "name": msg.name
+                    })
         # Save to DB asynchronously (or we can block, it's fast enough in SQLite)
         db.save_chat_history(participant_identity, serialized_history)
 
