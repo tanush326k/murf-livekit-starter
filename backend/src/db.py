@@ -126,8 +126,30 @@ def init_db():
     with contextlib.suppress(sqlite3.OperationalError):
         cursor.execute("ALTER TABLE escalations ADD COLUMN callback_time TEXT")
 
+    # Day 8: Call analytics table for tracking call outcomes
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS call_analytics (
+            call_id TEXT PRIMARY KEY,
+            start_time TEXT,
+            end_time TEXT,
+            duration_seconds REAL,
+            channel TEXT,
+            language TEXT,
+            outcome TEXT,
+            failure_type TEXT,
+            success_reason TEXT,
+            financial_outcome TEXT,
+            escalation_created INTEGER DEFAULT 0,
+            avg_latency_ms REAL,
+            created_at TEXT
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
+
 
 
 
@@ -261,6 +283,278 @@ def get_escalation_status(reference_id: str) -> str:
     if row:
         return row[0]
     return "unknown"
+
+
+# ── Day 8: Call Analytics Functions ──────────────────────────────────────────
+
+
+VALID_FAILURE_TYPES = (
+    "user_declined",
+    "incomplete_task",
+    "tool_failure",
+    "api_error",
+    "no_response",
+    "user_hangup",
+    "other",
+)
+
+
+def record_call_analytics(
+    call_id: str,
+    start_time: str,
+    end_time: str,
+    duration_seconds: float,
+    channel: str,
+    language: str,
+    outcome: str,
+    failure_type: Optional[str],
+    success_reason: Optional[str],
+    financial_outcome: Optional[str],
+    escalation_created: bool,
+    avg_latency_ms: Optional[float],
+) -> None:
+    """Record a call analytics entry. Called once when a call ends."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+
+    # Validate failure_type
+    if failure_type and failure_type not in VALID_FAILURE_TYPES:
+        failure_type = "other"
+
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO call_analytics
+            (call_id, start_time, end_time, duration_seconds, channel, language,
+             outcome, failure_type, success_reason, financial_outcome,
+             escalation_created, avg_latency_ms, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            call_id,
+            start_time,
+            end_time,
+            duration_seconds,
+            channel,
+            language or "unknown",
+            outcome,
+            failure_type,
+            success_reason,
+            financial_outcome,
+            1 if escalation_created else 0,
+            avg_latency_ms,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    logger.info("Recorded analytics for call %s: outcome=%s", call_id, outcome)
+
+
+def get_call_analytics(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    language: Optional[str] = None,
+    channel: Optional[str] = None,
+    outcome: Optional[str] = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return call analytics records with optional filters."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    query = "SELECT * FROM call_analytics WHERE 1=1"
+    params: list[Any] = []
+
+    if date_from:
+        query += " AND start_time >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND start_time <= ?"
+        params.append(date_to)
+    if language:
+        query += " AND language = ?"
+        params.append(language)
+    if channel:
+        query += " AND channel = ?"
+        params.append(channel)
+    if outcome:
+        query += " AND outcome = ?"
+        params.append(outcome)
+
+    query += " ORDER BY start_time DESC LIMIT ?"
+    params.append(limit)
+
+    cursor.execute(query, params)
+    columns = [desc[0] for desc in cursor.description]
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def get_analytics_summary(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    language: Optional[str] = None,
+    channel: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return KPI summary: total, successful, failed, success_rate, avg_latency."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    where = "WHERE 1=1"
+    params: list[Any] = []
+
+    if date_from:
+        where += " AND start_time >= ?"
+        params.append(date_from)
+    if date_to:
+        where += " AND start_time <= ?"
+        params.append(date_to)
+    if language:
+        where += " AND language = ?"
+        params.append(language)
+    if channel:
+        where += " AND channel = ?"
+        params.append(channel)
+
+    cursor.execute(f"SELECT COUNT(*) FROM call_analytics {where}", params)
+    total = cursor.fetchone()[0]
+
+    cursor.execute(
+        f"SELECT COUNT(*) FROM call_analytics {where} AND outcome = 'successful'",
+        params,
+    )
+    successful = cursor.fetchone()[0]
+
+    failed = total - successful
+
+    success_rate = round((successful / total) * 100, 1) if total > 0 else 0.0
+
+    cursor.execute(
+        f"SELECT AVG(avg_latency_ms) FROM call_analytics {where} AND avg_latency_ms IS NOT NULL",
+        params,
+    )
+    avg_latency = cursor.fetchone()[0]
+    avg_latency = round(avg_latency, 0) if avg_latency else None
+
+    conn.close()
+
+    return {
+        "total_calls": total,
+        "successful_calls": successful,
+        "failed_calls": failed,
+        "success_rate": success_rate,
+        "avg_latency_ms": avg_latency,
+    }
+
+
+def get_analytics_charts(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    language: Optional[str] = None,
+    channel: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return chart data: calls over time, failure distribution, language distribution."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    where = "WHERE 1=1"
+    params: list[Any] = []
+
+    if date_from:
+        where += " AND start_time >= ?"
+        params.append(date_from)
+    if date_to:
+        where += " AND start_time <= ?"
+        params.append(date_to)
+    if language:
+        where += " AND language = ?"
+        params.append(language)
+    if channel:
+        where += " AND channel = ?"
+        params.append(channel)
+
+    # Calls over time (by date)
+    cursor.execute(
+        f"""
+        SELECT SUBSTR(start_time, 1, 10) AS day,
+               SUM(CASE WHEN outcome = 'successful' THEN 1 ELSE 0 END) AS successful,
+               SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed
+        FROM call_analytics {where}
+        GROUP BY day ORDER BY day
+        """,
+        params,
+    )
+    calls_over_time = [
+        {"date": r[0], "successful": r[1], "failed": r[2]}
+        for r in cursor.fetchall()
+    ]
+
+    # Failure type distribution
+    cursor.execute(
+        f"""
+        SELECT failure_type, COUNT(*) as cnt
+        FROM call_analytics {where} AND outcome = 'failed' AND failure_type IS NOT NULL
+        GROUP BY failure_type ORDER BY cnt DESC
+        """,
+        params,
+    )
+    failure_distribution = [
+        {"type": r[0], "count": r[1]} for r in cursor.fetchall()
+    ]
+
+    # Language distribution
+    cursor.execute(
+        f"""
+        SELECT language, COUNT(*) as cnt
+        FROM call_analytics {where}
+        GROUP BY language ORDER BY cnt DESC
+        """,
+        params,
+    )
+    language_distribution = [
+        {"language": r[0], "count": r[1]} for r in cursor.fetchall()
+    ]
+
+    # Financial outcome distribution
+    cursor.execute(
+        f"""
+        SELECT financial_outcome, COUNT(*) as cnt
+        FROM call_analytics {where} AND financial_outcome IS NOT NULL
+        GROUP BY financial_outcome ORDER BY cnt DESC
+        """,
+        params,
+    )
+    financial_outcomes = [
+        {"outcome": r[0], "count": r[1]} for r in cursor.fetchall()
+    ]
+
+    # Latency trend (last 20 calls with latency data)
+    cursor.execute(
+        f"""
+        SELECT call_id, avg_latency_ms, start_time
+        FROM call_analytics {where} AND avg_latency_ms IS NOT NULL
+        ORDER BY start_time DESC LIMIT 20
+        """,
+        params,
+    )
+    latency_trend = [
+        {"call_id": r[0], "latency_ms": r[1], "time": r[2]}
+        for r in cursor.fetchall()
+    ]
+    latency_trend.reverse()  # chronological order
+
+    conn.close()
+
+    return {
+        "calls_over_time": calls_over_time,
+        "failure_distribution": failure_distribution,
+        "language_distribution": language_distribution,
+        "financial_outcomes": financial_outcomes,
+        "latency_trend": latency_trend,
+    }
 
 
 init_db()

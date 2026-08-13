@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import datetime
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -186,15 +188,138 @@ class CleanGoogleLLM(google.LLM):
         return stream
 
 
+# ── Day 8: Call Analytics Tracker ────────────────────────────────────────────
+
+
+class CallTracker:
+    """Tracks call lifecycle, outcome, latency for analytics.
+
+    Success is explicit: a tool succeeding does NOT automatically mean the call
+    was successful. The call is only marked successful when the agent has
+    delivered the tool results to the user (agent speaks after a task-completing
+    tool call).
+    """
+
+    def __init__(self, call_id: str, channel: str):
+        self.call_id = call_id
+        self.channel = channel  # 'browser' or 'sip'
+        self.start_time = datetime.now().isoformat()
+        self._start_mono = time.monotonic()
+        self.language = "English"
+        self.outcome: Optional[str] = None          # 'successful' or 'failed'
+        self.failure_type: Optional[str] = None
+        self.success_reason: Optional[str] = None
+        self.financial_outcome: Optional[str] = None
+        self.escalation_created = False
+        self.user_spoke = False
+        self._task_completed = False  # True when a task-completing tool returns data
+        self._latency_samples: list[float] = []
+        self._last_user_stop_time: Optional[float] = None
+
+    def on_user_stopped_speaking(self):
+        self.user_spoke = True
+        self._last_user_stop_time = time.monotonic()
+
+    def on_agent_started_speaking(self):
+        if self._last_user_stop_time is not None:
+            delta_ms = (time.monotonic() - self._last_user_stop_time) * 1000
+            self._latency_samples.append(delta_ms)
+            logger.info("Voice latency: %d ms", int(delta_ms))
+            self._last_user_stop_time = None
+
+    def on_agent_stopped_speaking(self):
+        # If a task-completing tool succeeded AND the agent just finished
+        # speaking the result to the user → call is successful.
+        if self._task_completed and self.outcome is None:
+            self.outcome = "successful"
+            if not self.success_reason:
+                self.success_reason = self.financial_outcome or "task_completed"
+
+    def mark_task_completed(self, financial_outcome: str):
+        """Called when a task-completing tool returns valid data.
+        Does NOT mark the call successful yet — that happens only when
+        the agent speaks the result to the user."""
+        self._task_completed = True
+        # Map to readable positive financial outcome labels
+        if financial_outcome in ("eligibility_check_completed", "eligibility_confirmed"):
+            self.financial_outcome = "Eligibility confirmed"
+        elif financial_outcome == "scheme_info_provided":
+            self.financial_outcome = "Scheme information provided"
+        elif financial_outcome == "documents_provided":
+            self.financial_outcome = "Required documents provided"
+        else:
+            self.financial_outcome = financial_outcome
+
+    def mark_failed(self, failure_type: str):
+        # If task was already completed, saying goodbye is NOT a failure
+        if self._task_completed:
+            if self.outcome is None:
+                self.outcome = "successful"
+                if not self.success_reason:
+                    self.success_reason = self.financial_outcome or "task_completed"
+            return
+        if self.outcome is None:  # Don't overwrite existing outcome
+            self.outcome = "failed"
+            self.failure_type = failure_type
+
+    def mark_escalation(self):
+        self.escalation_created = True
+        if self.financial_outcome is None or self.financial_outcome == "human_escalation_created":
+            self.financial_outcome = "Escalation successfully created"
+        # Escalation itself can be a successful task if it was the user's intent
+        self._task_completed = True
+
+    def finalize_and_record(self):
+        """Called when the session ends. Writes analytics to DB."""
+        end_time = datetime.now().isoformat()
+        duration = time.monotonic() - self._start_mono
+
+        # Apply defaults if outcome was never explicitly set
+        if self.outcome is None:
+            if not self.user_spoke:
+                self.outcome = "failed"
+                self.failure_type = "no_response"
+            else:
+                self.outcome = "failed"
+                self.failure_type = "incomplete_task"
+
+        avg_latency = None
+        if self._latency_samples:
+            avg_latency = round(
+                sum(self._latency_samples) / len(self._latency_samples), 1
+            )
+
+        try:
+            db.record_call_analytics(
+                call_id=self.call_id,
+                start_time=self.start_time,
+                end_time=end_time,
+                duration_seconds=round(duration, 1),
+                channel=self.channel,
+                language=self.language,
+                outcome=self.outcome,
+                failure_type=self.failure_type,
+                success_reason=self.success_reason,
+                financial_outcome=self.financial_outcome,
+                escalation_created=self.escalation_created,
+                avg_latency_ms=avg_latency,
+            )
+        except Exception as e:
+            logger.error("Failed to record call analytics: %s", e)
+
+
 class AssistantFnc:
-    def __init__(self, participant_identity: str = "unknown_user", session_shutdown_cb = None):
+    def __init__(self, participant_identity: str = "unknown_user", session_shutdown_cb = None, call_tracker: Optional[CallTracker] = None):
         self.participant_identity = participant_identity
         self.session_shutdown_cb = session_shutdown_cb
+        self.call_tracker = call_tracker
 
     @llm.function_tool(
         description="Opt the caller out of future outbound calls and terminate the call immediately. Call this when the user says they want to stop receiving calls, opt out, or stop these calls."
     )
     async def opt_out(self) -> str:
+        if self.call_tracker:
+            self.call_tracker.mark_failed("user_declined")
         if self.session_shutdown_cb:
             import asyncio
             asyncio.create_task(self.session_shutdown_cb())
@@ -204,6 +329,8 @@ class AssistantFnc:
         description="Terminate the call immediately. Call this when the user says NO to hearing more details, or says goodbye to end the conversation."
     )
     async def terminate_call(self) -> str:
+        if self.call_tracker:
+            self.call_tracker.mark_failed("user_declined")
         if self.session_shutdown_cb:
             import asyncio
             asyncio.create_task(self.session_shutdown_cb())
@@ -259,6 +386,9 @@ class AssistantFnc:
                     eligible.append(s)
 
             if not eligible:
+                # Tool succeeded but no schemes found — still a completed task
+                if self.call_tracker:
+                    self.call_tracker.mark_task_completed("eligibility_check_completed")
                 return f"Based on our database (updated {updated_at}), I couldn't find any specific schemes for those details."
 
             response = f"Based on our database (updated {updated_at}), you are eligible for {len(eligible)} scheme(s): "
@@ -266,10 +396,17 @@ class AssistantFnc:
                 docs = ", ".join(e.get("documents_required", []))
                 response += f"{idx}. {e['name']}. You will need these documents: {docs}. "
 
+            # Task completed: eligibility data ready to be spoken to user
+            # Note: call is NOT yet successful — success only when agent speaks this
+            if self.call_tracker:
+                self.call_tracker.mark_task_completed("eligibility_check_completed")
+
             return response
 
         except Exception as e:
             logger.error(f"Failed to load schemes data: {e}")
+            if self.call_tracker:
+                self.call_tracker.mark_failed("tool_failure")
             return "The scheme database is currently down. Please apologize to the user and suggest they try again later."
 
     @llm.function_tool(
@@ -304,6 +441,9 @@ class AssistantFnc:
             preferred_followup=preferred_followup,
             callback_time=callback_time,
         )
+        # Day 8: Track escalation in analytics
+        if self.call_tracker:
+            self.call_tracker.mark_escalation()
         return (
             f"Escalation created successfully. Reference ID is {reference_id}. "
             f"Tell the caller their request has been escalated to a human agent, and their "
@@ -343,20 +483,34 @@ async def my_agent(ctx: JobContext):
     def on_track_subscribed(track: rtc.RemoteTrack, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
         logger.info(f"ROOM EVENT: Subscribed to track {publication.sid} ({track.kind}) from participant {participant.identity}")
 
-    # Wait up to 60 seconds for the SIP caller to answer and join the room
+    # Wait up to 60 seconds for the participant to answer and join the room
     import asyncio
     participant_identity = "unknown_user"
-    for _ in range(600): # wait for 60 seconds max
+    for _ in range(600):  # wait for 60 seconds max
         if ctx.room.remote_participants:
             participant_identity = next(iter(ctx.room.remote_participants.values())).identity
             break
         await asyncio.sleep(0.1)
 
+    # Determine channel and initialize CallTracker
+    channel = "browser"
+    if ctx.room.remote_participants:
+        part = next(iter(ctx.room.remote_participants.values()))
+        if part.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP or part.identity.startswith("sip"):
+            channel = "sip"
+    call_id = ctx.room.name or f"call-{int(time.time())}"
+    call_tracker = CallTracker(call_id=call_id, channel=channel)
+
     async def shutdown_session():
+        call_tracker.finalize_and_record()
         await asyncio.sleep(4.0)
         await session.aclose()
 
-    assistant_tools = AssistantFnc(participant_identity, session_shutdown_cb=shutdown_session)
+    assistant_tools = AssistantFnc(
+        participant_identity,
+        session_shutdown_cb=shutdown_session,
+        call_tracker=call_tracker,
+    )
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
     session = AgentSession(
@@ -376,13 +530,50 @@ async def my_agent(ctx: JobContext):
         tools=llm.find_function_tools(assistant_tools),
     )
 
+    silence_count = 0
+    silence_task: Optional[asyncio.Task] = None
+
+    def cancel_silence_timer():
+        nonlocal silence_task
+        if silence_task and not silence_task.done():
+            silence_task.cancel()
+            silence_task = None
+
+    async def _handle_silence_timeout():
+        nonlocal silence_count
+        try:
+            await asyncio.sleep(10.0)
+            silence_count += 1
+            if silence_count == 1:
+                logger.info("SILENCE: First timeout - re-prompting user ('Are you still there?')")
+                session.generate_reply(
+                    instructions="Politely ask the caller: 'Are you still there?' in English (or 'क्या आप अभी भी सुन रहे हैं?' if caller speaks Hindi).",
+                    allow_interruptions=True,
+                )
+            elif silence_count == 2:
+                logger.info("SILENCE: Second timeout - re-prompting user ('Would you like to continue?')")
+                session.generate_reply(
+                    instructions="Politely ask: 'Would you like to continue?' in English (or 'क्या आप बातचीत जारी रखना चाहते हैं?' if caller speaks Hindi).",
+                    allow_interruptions=True,
+                )
+            else:
+                logger.info("SILENCE: Continued silence - gracefully ending call and recording no_response.")
+                call_tracker.mark_failed("no_response")
+                await shutdown_session()
+        except asyncio.CancelledError:
+            pass
+
     @session.on("user_started_speaking")
     def on_user_started_speaking():
+        nonlocal silence_count
+        cancel_silence_timer()
+        silence_count = 0
         logger.info("EVENT: User started speaking")
 
     @session.on("user_stopped_speaking")
     def on_user_stopped_speaking():
         logger.info("EVENT: User stopped speaking")
+        call_tracker.on_user_stopped_speaking()
 
     @session.on("user_speech_committed")
     def on_user_speech_committed(msg: llm.ChatMessage):
@@ -390,29 +581,22 @@ async def my_agent(ctx: JobContext):
 
     @session.on("agent_started_speaking")
     def on_agent_started_speaking():
+        cancel_silence_timer()
         logger.info("EVENT: Agent started speaking")
+        call_tracker.on_agent_started_speaking()
 
     @session.on("agent_stopped_speaking")
     def on_agent_stopped_speaking():
         logger.info("EVENT: Agent stopped speaking")
+        call_tracker.on_agent_stopped_speaking()
+        cancel_silence_timer()
+        silence_task = asyncio.create_task(_handle_silence_timeout())
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    @ctx.room.on("disconnected")
+    def on_room_disconnected(reason=None):
+        cancel_silence_timer()
+        logger.info(f"ROOM EVENT: Disconnected ({reason})")
+        call_tracker.finalize_and_record()
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(

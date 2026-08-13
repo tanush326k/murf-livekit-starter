@@ -4,7 +4,8 @@ import { useMemo, useState } from 'react';
 import { TokenSource } from 'livekit-client';
 import { useSession } from '@livekit/components-react';
 import { WarningIcon } from '@phosphor-icons/react/dist/ssr';
-import { ShieldCheck, Wallet, Landmark, Smartphone, BookOpen } from 'lucide-react';
+import Link from 'next/link';
+import { ShieldCheck, Wallet, Landmark, Smartphone, BookOpen, BarChart3, LifeBuoy } from 'lucide-react';
 import type { AppConfig } from '@/app-config';
 import { AgentSessionProvider } from '@/components/agents-ui/agent-session-provider';
 import { StartAudioButton } from '@/components/agents-ui/start-audio-button';
@@ -14,10 +15,32 @@ import { TopicModal, type TopicContent } from '@/components/moneybuddy/topic-mod
 import { Toaster } from '@/components/ui/sonner';
 import { useAgentErrors } from '@/hooks/useAgentErrors';
 import { useDebugMode } from '@/hooks/useDebug';
-import { LanguageProvider } from '@/hooks/useLanguage';
+import { LanguageProvider, useLanguage } from '@/hooks/useLanguage';
 import { getSandboxTokenSource } from '@/lib/utils';
 
 const IN_DEVELOPMENT = process.env.NODE_ENV !== 'production';
+
+function HeaderNavLinks() {
+  const { t } = useLanguage();
+  return (
+    <div className="flex items-center gap-2">
+      <Link
+        href="/analytics"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground/80 hover:text-foreground bg-muted/50 hover:bg-muted/80 border border-border/40 transition-colors"
+      >
+        <BarChart3 className="h-3.5 w-3.5 text-primary" />
+        <span>{t('nav.analytics')}</span>
+      </Link>
+      <Link
+        href="/escalations"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground/80 hover:text-foreground bg-muted/50 hover:bg-muted/80 border border-border/40 transition-colors"
+      >
+        <LifeBuoy className="h-3.5 w-3.5 text-emerald-400" />
+        <span>{t('nav.humanSupport')}</span>
+      </Link>
+    </div>
+  );
+}
 
 function AppSetup() {
   useDebugMode({ enabled: IN_DEVELOPMENT });
@@ -139,10 +162,13 @@ export function App({ appConfig }: AppProps) {
               MoneyBuddy
             </span>
           </div>
-          <LanguageSelector />
+          <div className="flex items-center gap-3">
+            <HeaderNavLinks />
+            <LanguageSelector />
+          </div>
         </header>
 
-        <main className="flex flex-col min-h-screen pt-16">
+        <main className="flex flex-col min-h-screen pt-16 mb-glow-bg">
           {/* Hero Section containing Voice Agent */}
           <section className="relative w-full flex-1 flex flex-col justify-center min-h-[85vh]">
             <ViewController appConfig={appConfig} />

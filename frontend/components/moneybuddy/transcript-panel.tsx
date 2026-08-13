@@ -39,7 +39,7 @@ export function TranscriptPanel({ messages, agentState, className }: TranscriptP
       <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border/20">
         <div className="h-2 w-2 rounded-full bg-primary/60" />
         <h3 className="text-sm font-semibold text-foreground/80">
-          Live Transcript
+          {t('transcript.title')}
         </h3>
       </div>
 

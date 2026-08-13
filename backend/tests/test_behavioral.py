@@ -190,6 +190,151 @@ async def run_tests():
     # Clean up test escalation records
     conn = db.sqlite3.connect(db.DB_PATH)
     conn.execute("DELETE FROM escalations WHERE caller_id LIKE 'test_%'")
+    conn.execute("DELETE FROM call_analytics WHERE call_id LIKE 'test_%'")
+    conn.commit()
+    conn.close()
+
+    # ===== DAY 8: CALL ANALYTICS TESTS =====
+    from agent import CallTracker
+
+    print("\n[Test 9] Analytics DB Recording & Summary (Day 8)")
+    db.record_call_analytics(
+        call_id="test_call_success_1",
+        start_time="2026-08-13T10:00:00",
+        end_time="2026-08-13T10:02:00",
+        duration_seconds=120.0,
+        channel="browser",
+        language="English",
+        outcome="successful",
+        failure_type=None,
+        success_reason="eligibility_check_completed",
+        financial_outcome="eligibility_check_completed",
+        escalation_created=False,
+        avg_latency_ms=450.0,
+    )
+
+    summary = db.get_analytics_summary()
+    assert summary["total_calls"] >= 1
+    assert summary["successful_calls"] >= 1
+    assert summary["success_rate"] > 0
+    print(f"Summary calculated: {summary}")
+    print("[Passed]")
+
+    print("\n[Test 10] Call Outcome: Tool Success alone vs Agent Speaking (Day 8)")
+    # Test that tool completing task does NOT mark successful until agent speaks
+    tracker = CallTracker("test_call_flow_1", "browser")
+    tracker.on_user_stopped_speaking()
+    tracker.on_agent_started_speaking()
+    
+    # Tool executes successfully
+    fnc_track = AssistantFnc("test_caller_A", call_tracker=tracker)
+    res_elig = await fnc_track.check_scheme_eligibility(30, 200000, "farmer")
+    assert "Pradhan Mantri" in res_elig
+    
+    # BEFORE agent speaks result -> outcome must NOT be successful yet
+    assert tracker.outcome != "successful", "Tool success alone prematurely marked call as successful!"
+    assert tracker._task_completed is True
+    
+    # NOW agent finishes speaking the result to user
+    tracker.on_agent_stopped_speaking()
+    assert tracker.outcome == "successful", "Call failed to mark successful after agent spoke result!"
+    
+    # Verify latency sample was recorded
+    assert len(tracker._latency_samples) == 1
+    assert tracker._latency_samples[0] >= 0
+    
+    tracker.finalize_and_record()
+    rec = db.get_call_analytics(outcome="successful")
+    assert any(r["call_id"] == "test_call_flow_1" for r in rec)
+    print("[Passed]")
+
+    print("\n[Test 10B] Outcome Preservation: Terminate Call after Task Completion (Phase 1)")
+    tracker_term = CallTracker("test_call_flow_2", "browser")
+    tracker_term.on_user_stopped_speaking()
+    tracker_term.on_agent_started_speaking()
+    fnc_term = AssistantFnc("test_caller_A", call_tracker=tracker_term)
+    await fnc_term.check_scheme_eligibility(30, 200000, "farmer")
+    tracker_term.on_agent_stopped_speaking()
+    assert tracker_term.outcome == "successful"
+    assert tracker_term.financial_outcome == "Eligibility confirmed"
+
+    # User says "Goodbye" -> terminate_call invoked
+    await fnc_term.terminate_call()
+    assert tracker_term.outcome == "successful", "terminate_call incorrectly downgraded a completed call to failed!"
+    assert tracker_term.financial_outcome == "Eligibility confirmed"
+    tracker_term.finalize_and_record()
+    print("[Passed]")
+
+    print("\n[Test 11] Failure: User Declined (Day 8)")
+    tracker_dec = CallTracker("test_call_declined", "sip")
+    fnc_dec = AssistantFnc("test_caller_A", call_tracker=tracker_dec)
+    await fnc_dec.terminate_call()
+    assert tracker_dec.outcome == "failed"
+    assert tracker_dec.failure_type == "user_declined"
+    tracker_dec.finalize_and_record()
+    
+    rec_dec = db.get_call_analytics(outcome="failed")
+    assert any(r["call_id"] == "test_call_declined" and r["failure_type"] == "user_declined" for r in rec_dec)
+    print("[Passed]")
+
+    print("\n[Test 12] Failure: Tool Failure (Day 8)")
+    tracker_tf = CallTracker("test_call_tf", "browser")
+    fnc_tf = AssistantFnc("test_caller_A", call_tracker=tracker_tf)
+    
+    # Force tool failure
+    os.rename(data_path, temp_path)
+    try:
+        await fnc_tf.check_scheme_eligibility(30, 200000, "farmer")
+        assert tracker_tf.outcome == "failed"
+        assert tracker_tf.failure_type == "tool_failure"
+    finally:
+        os.rename(temp_path, data_path)
+    
+    tracker_tf.finalize_and_record()
+    rec_tf = db.get_call_analytics(outcome="failed")
+    assert any(r["call_id"] == "test_call_tf" and r["failure_type"] == "tool_failure" for r in rec_tf)
+    print("[Passed]")
+
+    print("\n[Test 13] Failure: Incomplete Task & No Response (Day 8)")
+    # No user speech -> no_response
+    t_no_resp = CallTracker("test_call_no_resp", "browser")
+    t_no_resp.finalize_and_record()
+    assert t_no_resp.outcome == "failed"
+    assert t_no_resp.failure_type == "no_response"
+
+    # User spoke but ended before success -> incomplete_task
+    t_inc = CallTracker("test_call_inc", "browser")
+    t_inc.on_user_stopped_speaking()
+    t_inc.finalize_and_record()
+    assert t_inc.outcome == "failed"
+    assert t_inc.failure_type == "incomplete_task"
+    print("[Passed]")
+
+    print("\n[Test 14] Analytics Filters & Charts (Day 8)")
+    charts = db.get_analytics_charts()
+    assert "calls_over_time" in charts
+    assert "failure_distribution" in charts
+    assert "financial_outcomes" in charts
+    
+    filtered_sip = db.get_call_analytics(channel="sip")
+    assert all(r["channel"] == "sip" for r in filtered_sip)
+    print("[Passed]")
+
+    print("\n[Test 15] Analytics Privacy Check (Day 8)")
+    all_recs = db.get_call_analytics()
+    for r in all_recs:
+        # Verify no sensitive dictionary keys or transcript text columns exist in schema
+        assert "password" not in r
+        assert "otp" not in r
+        assert "pin" not in r
+        assert "transcript" not in r
+        assert "account_number" not in r
+    print("[Passed]")
+
+    # Final cleanup
+    conn = db.sqlite3.connect(db.DB_PATH)
+    conn.execute("DELETE FROM escalations WHERE caller_id LIKE 'test_%'")
+    conn.execute("DELETE FROM call_analytics WHERE call_id LIKE 'test_%'")
     conn.commit()
     conn.close()
 
