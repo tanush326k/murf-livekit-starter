@@ -36,6 +36,17 @@ flowchart LR
 
 ---
 
+## Day 5 Challenge — Domain Data Source & Fallback Policy
+
+MoneyBuddy uses a grounded, curated local dataset (`backend/src/schemes_data.json`) containing official Indian government financial schemes (PM Kisan Samman Nidhi, PM Suraksha Bima Yojana, PM Jeevan Jyoti Bima Yojana). 
+
+- **Data Origin**: Grounded local JSON dataset containing official scheme parameters, eligibility limits, and document checklists.
+- **Timestamp Transparency**: Every tool response explicitly states data recency (*"Based on our database updated yesterday..."*).
+- **Spoken Fallback Handling**: If the database file is unavailable or unreadable, MoneyBuddy delivers a graceful spoken apology rather than silence or AI hallucination.
+- **Context Chaining**: Automatically reuses stored caller facts (e.g. caller district/occupation from Day 4 memory) without re-asking the caller.
+
+---
+
 ## Quickstart
 
 ### Prerequisites
