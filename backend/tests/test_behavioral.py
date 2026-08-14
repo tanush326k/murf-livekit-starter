@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
 from agent import AssistantFnc
+from specialist import SchemeSpecialistFnc
 import db
 
 async def run_tests():
@@ -23,7 +24,8 @@ async def run_tests():
 
     # 1. Scheme-tool success test
     print("\n[Test 1] Scheme-tool success test")
-    res = await fnc_A.check_scheme_eligibility(30, 200000, "farmer")
+    spec_fnc_A = SchemeSpecialistFnc("test_caller_A")
+    res = await spec_fnc_A.check_scheme_eligibility(30, 200000, "farmer")
     print(f"Result: {res}")
     assert "yesterday" in res
     assert "Pradhan Mantri Kisan" in res
@@ -35,7 +37,7 @@ async def run_tests():
     temp_path = data_path + ".bak"
     os.rename(data_path, temp_path)
     try:
-        res = await fnc_A.check_scheme_eligibility(30, 200000, "farmer")
+        res = await spec_fnc_A.check_scheme_eligibility(30, 200000, "farmer")
         print(f"Result: {res}")
         assert "down" in res or "unavailable" in res
         print("[Passed]")
@@ -108,7 +110,7 @@ async def run_tests():
     conn.close()
 
     # A normal question answered via check_scheme_eligibility — no escalation
-    res = await fnc_A.check_scheme_eligibility(25, 150000, "farmer")
+    res = await spec_fnc_A.check_scheme_eligibility(25, 150000, "farmer")
     assert "Pradhan Mantri" in res  # normal answer
 
     conn = db.sqlite3.connect(db.DB_PATH)
@@ -227,8 +229,8 @@ async def run_tests():
     tracker.on_agent_started_speaking()
     
     # Tool executes successfully
-    fnc_track = AssistantFnc("test_caller_A", call_tracker=tracker)
-    res_elig = await fnc_track.check_scheme_eligibility(30, 200000, "farmer")
+    spec_fnc_track = SchemeSpecialistFnc("test_caller_A", call_tracker=tracker)
+    res_elig = await spec_fnc_track.check_scheme_eligibility(30, 200000, "farmer")
     assert "Pradhan Mantri" in res_elig
     
     # BEFORE agent speaks result -> outcome must NOT be successful yet
@@ -252,13 +254,14 @@ async def run_tests():
     tracker_term = CallTracker("test_call_flow_2", "browser")
     tracker_term.on_user_stopped_speaking()
     tracker_term.on_agent_started_speaking()
-    fnc_term = AssistantFnc("test_caller_A", call_tracker=tracker_term)
-    await fnc_term.check_scheme_eligibility(30, 200000, "farmer")
+    spec_fnc_term = SchemeSpecialistFnc("test_caller_A", call_tracker=tracker_term)
+    await spec_fnc_term.check_scheme_eligibility(30, 200000, "farmer")
     tracker_term.on_agent_stopped_speaking()
     assert tracker_term.outcome == "successful"
     assert tracker_term.financial_outcome == "Eligibility confirmed"
 
     # User says "Goodbye" -> terminate_call invoked
+    fnc_term = AssistantFnc("test_caller_A", call_tracker=tracker_term)
     await fnc_term.terminate_call()
     assert tracker_term.outcome == "successful", "terminate_call incorrectly downgraded a completed call to failed!"
     assert tracker_term.financial_outcome == "Eligibility confirmed"
@@ -284,7 +287,8 @@ async def run_tests():
     # Force tool failure
     os.rename(data_path, temp_path)
     try:
-        await fnc_tf.check_scheme_eligibility(30, 200000, "farmer")
+        spec_fnc_tf = SchemeSpecialistFnc("test_caller_A", call_tracker=tracker_tf)
+        await spec_fnc_tf.check_scheme_eligibility(30, 200000, "farmer")
         assert tracker_tf.outcome == "failed"
         assert tracker_tf.failure_type == "tool_failure"
     finally:

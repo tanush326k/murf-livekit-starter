@@ -25,6 +25,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import db
 from prompt import SYSTEM_PROMPT
+from specialist import SchemeSpecialistAgent, SchemeSpecialistFnc
 
 logger = logging.getLogger("agent")
 load_dotenv(".env.local")
@@ -155,6 +156,15 @@ def clean_speech_text(text: str) -> str:
     # Strip LLM tool call leakage (e.g. from Llama-3)
     text = re.sub(r'\(function=[a-zA-Z_]+>[^)]*\)?', '', text)
     text = re.sub(r'\{[^{}]*\}', '', text) # Strip raw JSON objects just in case
+    # Convert internal variables to natural language equivalents
+    text = text.replace("eligibility_confirmed", "eligibility confirmed")
+    text = text.replace("eligibility_check_completed", "eligibility check completed")
+    text = text.replace("scheme_info_provided", "scheme information provided")
+    text = text.replace("documents_provided", "documents provided")
+    text = text.replace("human_escalation_created", "escalation created")
+    text = text.replace("pmkisan", "PM Kisan")
+    text = text.replace("pmsby", "PMSBY")
+    text = text.replace("pmjjby", "PMJJBY")
     return text
 
 
@@ -309,10 +319,47 @@ class CallTracker:
 
 
 class AssistantFnc:
-    def __init__(self, participant_identity: str = "unknown_user", session_shutdown_cb = None, call_tracker: Optional[CallTracker] = None):
+    def __init__(
+        self,
+        participant_identity: str = "unknown_user",
+        session_shutdown_cb = None,
+        call_tracker: Optional[CallTracker] = None,
+        handoff_cb = None,
+    ):
         self.participant_identity = participant_identity
         self.session_shutdown_cb = session_shutdown_cb
         self.call_tracker = call_tracker
+        self.handoff_cb = handoff_cb
+
+    @llm.function_tool(
+        description=(
+            "Hand off the conversation to the Government Scheme Specialist. "
+            "Call this ONLY when the caller's request genuinely requires in-depth government scheme information or eligibility checking. "
+            "Do NOT call this for general banking, savings accounts, lost cards, fraud, human escalation, or opt-outs. "
+            "Before calling, you MUST tell the caller: 'I will connect you with our government scheme specialist.'"
+        )
+    )
+    async def handoff_to_scheme_specialist(
+        self,
+        user_query: str,
+        caller_context: Optional[str] = None,
+    ) -> str:
+        logger.info("Main agent initiating handoff to Scheme Specialist. Query: %s", user_query)
+        safe_query = db.sanitize_text(user_query) if hasattr(db, "sanitize_text") else user_query
+        safe_context = db.sanitize_text(caller_context) if caller_context and hasattr(db, "sanitize_text") else caller_context
+
+        if self.handoff_cb:
+            try:
+                import asyncio
+                if asyncio.iscoroutinefunction(self.handoff_cb):
+                    await self.handoff_cb(user_query=safe_query, caller_context=safe_context)
+                else:
+                    self.handoff_cb(user_query=safe_query, caller_context=safe_context)
+                return "Connecting you to our government scheme specialist now."
+            except Exception as e:
+                logger.error("Handoff to specialist failed: %s", e)
+                return "I am unable to connect you to the scheme specialist right now, but I can still help with the information I have."
+        return "I will connect you with our government scheme specialist now."
 
     @llm.function_tool(
         description="Opt the caller out of future outbound calls and terminate the call immediately. Call this when the user says they want to stop receiving calls, opt out, or stop these calls."
@@ -368,46 +415,7 @@ class AssistantFnc:
         agent_save_caller(id_to_save, name, language_preference, facts_dict)
         return "Saved with consent. Only non-sensitive context was stored."
 
-    @llm.function_tool(
-        description="Check user's eligibility for government schemes based on age, annual income, and occupation."
-    )
-    async def check_scheme_eligibility(self, age: int, annual_income: float, occupation: str) -> str:
-        try:
-            data_path = os.path.join(os.path.dirname(__file__), "schemes_data.json")
-            with open(data_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
 
-            updated_at = data.get("updated_at", "an unknown date")
-            schemes = data.get("schemes", [])
-
-            eligible = []
-            for s in schemes:
-                if annual_income <= s.get("max_income", float('inf')):
-                    eligible.append(s)
-
-            if not eligible:
-                # Tool succeeded but no schemes found — still a completed task
-                if self.call_tracker:
-                    self.call_tracker.mark_task_completed("eligibility_check_completed")
-                return f"Based on our database (updated {updated_at}), I couldn't find any specific schemes for those details."
-
-            response = f"Based on our database (updated {updated_at}), you are eligible for {len(eligible)} scheme(s): "
-            for idx, e in enumerate(eligible, 1):
-                docs = ", ".join(e.get("documents_required", []))
-                response += f"{idx}. {e['name']}. You will need these documents: {docs}. "
-
-            # Task completed: eligibility data ready to be spoken to user
-            # Note: call is NOT yet successful — success only when agent speaks this
-            if self.call_tracker:
-                self.call_tracker.mark_task_completed("eligibility_check_completed")
-
-            return response
-
-        except Exception as e:
-            logger.error(f"Failed to load schemes data: {e}")
-            if self.call_tracker:
-                self.call_tracker.mark_failed("tool_failure")
-            return "The scheme database is currently down. Please apologize to the user and suggest they try again later."
 
     @llm.function_tool(
         description=(
@@ -506,10 +514,56 @@ async def my_agent(ctx: JobContext):
         await asyncio.sleep(4.0)
         await session.aclose()
 
+    assistant_agent = Assistant(participant_identity=participant_identity)
+
+    async def handle_handback_to_moneybuddy(reason: str, summary: Optional[str] = None):
+        logger.info("HANDBACK: Switching session agent back to MoneyBuddy. Reason: %s", reason)
+        await ctx.room.local_participant.set_attributes({"active_agent": "moneybuddy"})
+        if hasattr(session, "tts") and hasattr(session.tts, "update_options"):
+            session.tts.update_options(voice="Anisha")
+        session.update_agent(assistant_agent)
+        session.generate_reply(
+            instructions="You are MoneyBuddy. You have just returned from the government scheme specialist. Politely ask the caller: 'Is there anything else I can help you with?' in English (or 'क्या मैं आपकी किसी और चीज़ में मदद कर सकती हूँ?' if caller speaks Hindi).",
+            allow_interruptions=True,
+        )
+
+    async def handle_handoff_to_specialist(user_query: str, caller_context: Optional[str] = None):
+        logger.info("HANDOFF: Switching session agent to Scheme Specialist. Query: %s", user_query)
+        specialist_agent = SchemeSpecialistAgent(
+            participant_identity=participant_identity,
+            call_tracker=call_tracker,
+            handback_cb=handle_handback_to_moneybuddy,
+        )
+        await ctx.room.local_participant.set_attributes({"active_agent": "specialist"})
+        if hasattr(session, "tts") and hasattr(session.tts, "update_options"):
+            session.tts.update_options(voice="Nikhil")
+        session.update_agent(specialist_agent)
+
+        caller_lang = call_tracker.language if call_tracker and call_tracker.language else "English"
+        if caller_lang.lower() == "hindi":
+            intro = "नमस्ते, मैं सरकारी योजना विशेषज्ञ हूँ। मैं सरकारी योजनाओं की पात्रता, लाभ, दस्तावेज़ और आवेदन की जानकारी में आपकी मदद कर सकती हूँ।"
+        else:
+            intro = "Hi, I'm the Government Scheme Specialist. I can help you with government scheme eligibility, benefits, documents, and application information."
+        
+        # Eliminate latency by directly speaking the intro
+        session.chat_ctx.append(llm.ChatMessage(role="assistant", content=intro))
+        session.say(intro, allow_interruptions=True)
+
+        prompt_instruction = (
+            f"You are MoneyBuddy's government scheme specialist. The caller was transferred to you with this request: '{user_query}'. "
+            "You have just introduced yourself. Now, directly address their scheme question or eligibility using natural language. "
+            "NEVER speak internal variable names like 'pmkisan' or 'eligibility_confirmed'."
+        )
+        session.generate_reply(
+            instructions=prompt_instruction,
+            allow_interruptions=True,
+        )
+
     assistant_tools = AssistantFnc(
         participant_identity,
         session_shutdown_cb=shutdown_session,
         call_tracker=call_tracker,
+        handoff_cb=handle_handoff_to_specialist,
     )
 
     # Set up a voice AI pipeline using Murf Falcon, Gemini, Deepgram, and the LiveKit turn detector
@@ -600,7 +654,7 @@ async def my_agent(ctx: JobContext):
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=Assistant(participant_identity=participant_identity),
+        agent=assistant_agent,
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
@@ -613,6 +667,9 @@ async def my_agent(ctx: JobContext):
             ),
         ),
     )
+    # Set the participant identity metadata for the frontend
+    await ctx.room.local_participant.set_attributes({"active_agent": "moneybuddy"})
+
     # Wait a moment for media/RTP channels to establish on SIP calls
     await asyncio.sleep(2.0)
     # Force the agent to generate a reply

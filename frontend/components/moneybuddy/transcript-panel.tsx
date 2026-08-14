@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { type AgentState, type ReceivedMessage } from '@livekit/components-react';
-import { User, Bot } from 'lucide-react';
+import { useAgent, type AgentState, type ReceivedMessage } from '@livekit/components-react';
+import { User, Bot, Landmark, ArrowRightLeft } from 'lucide-react';
 import { useLanguage } from '@/hooks/useLanguage';
 import { cn } from '@/lib/shadcn/utils';
 
@@ -15,6 +15,7 @@ interface TranscriptPanelProps {
 
 export function TranscriptPanel({ messages, agentState, className }: TranscriptPanelProps) {
   const { t } = useLanguage();
+  const { state: currentAgentState, attributes: agentAttributes } = useAgent();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -36,11 +37,13 @@ export function TranscriptPanel({ messages, agentState, className }: TranscriptP
       )}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border/20">
-        <div className="h-2 w-2 rounded-full bg-primary/60" />
-        <h3 className="text-sm font-semibold text-foreground/80">
-          {t('transcript.title')}
-        </h3>
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/20">
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-primary/60" />
+          <h3 className="text-sm font-semibold text-foreground/80">
+            {t('transcript.title')}
+          </h3>
+        </div>
       </div>
 
       {/* Messages */}
@@ -67,55 +70,92 @@ export function TranscriptPanel({ messages, agentState, className }: TranscriptP
                   minute: '2-digit',
                 });
 
+                const msgLower = message.toLowerCase();
+                const isSpecialist = agentAttributes?.active_agent === 'specialist';
+
+                const isHandoffAnnouncement =
+                  !isUser &&
+                  (msgLower.includes('connect you with our government scheme specialist') ||
+                    msgLower.includes('connecting you to our government scheme specialist') ||
+                    message.includes('सरकारी योजना विशेषज्ञ से जोड़ता हूँ') ||
+                    message.includes('विशेषज्ञ से जोड़ रही हूँ'));
+
                 return (
                   <motion.div
                     key={id}
                     initial={{ opacity: 0, y: 12, scale: 0.97 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ duration: 0.3, ease: 'easeOut' }}
-                    className={cn(
-                      'flex gap-2.5',
-                      isUser ? 'flex-row-reverse' : 'flex-row'
-                    )}
+                    className="flex flex-col gap-2"
                   >
-                    {/* Avatar icon */}
-                    <div
-                      className={cn(
-                        'shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-1',
-                        isUser
-                          ? 'bg-primary/15 dark:bg-primary/10'
-                          : 'bg-sky-500/15 dark:bg-sky-400/10'
-                      )}
-                    >
-                      {isUser ? (
-                        <User className="h-3.5 w-3.5 text-primary" />
-                      ) : (
-                        <Bot className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
-                      )}
-                    </div>
-
-                    {/* Message bubble */}
-                    <div
-                      className={cn(
-                        'max-w-[80%] flex flex-col gap-1',
-                        isUser ? 'items-end' : 'items-start'
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wide">
-                          {isUser ? t('transcript.you') : t('transcript.moneybuddy')}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground/40">{timeStr}</span>
+                    {/* Handoff state banner if announcement message */}
+                    {isHandoffAnnouncement && (
+                      <div className="mx-auto my-1 flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 animate-pulse">
+                        <ArrowRightLeft className="h-3 w-3" />
+                        <span>{t('specialist.connecting')}</span>
                       </div>
+                    )}
+
+                    <div
+                      className={cn(
+                        'flex gap-2.5',
+                        isUser ? 'flex-row-reverse' : 'flex-row'
+                      )}
+                    >
+                      {/* Avatar icon */}
                       <div
                         className={cn(
-                          'rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
+                          'shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-1',
                           isUser
-                            ? 'bg-primary/10 dark:bg-primary/15 text-foreground rounded-tr-sm'
-                            : 'bg-muted/60 dark:bg-muted/40 text-foreground/90 rounded-tl-sm'
+                            ? 'bg-primary/15 dark:bg-primary/10'
+                            : isSpecialist
+                            ? 'bg-emerald-500/20 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/30'
+                            : 'bg-sky-500/15 dark:bg-sky-400/10'
                         )}
                       >
-                        {message}
+                        {isUser ? (
+                          <User className="h-3.5 w-3.5 text-primary" />
+                        ) : isSpecialist ? (
+                          <Landmark className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        ) : (
+                          <Bot className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
+                        )}
+                      </div>
+
+                      {/* Message bubble */}
+                      <div
+                        className={cn(
+                          'max-w-[80%] flex flex-col gap-1',
+                          isUser ? 'items-end' : 'items-start'
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wide flex items-center gap-1.5">
+                            {isUser
+                              ? t('transcript.you')
+                              : isSpecialist
+                              ? t('transcript.specialist')
+                              : t('transcript.moneybuddy')}
+                            {isSpecialist && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 uppercase">
+                                Specialist
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/40">{timeStr}</span>
+                        </div>
+                        <div
+                          className={cn(
+                            'rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
+                            isUser
+                              ? 'bg-primary/10 dark:bg-primary/15 text-foreground rounded-tr-sm'
+                              : isSpecialist
+                              ? 'bg-emerald-500/10 dark:bg-emerald-950/30 border border-emerald-500/30 text-foreground/95 rounded-tl-sm shadow-sm'
+                              : 'bg-muted/60 dark:bg-muted/40 text-foreground/90 rounded-tl-sm'
+                          )}
+                        >
+                          {message}
+                        </div>
                       </div>
                     </div>
                   </motion.div>

@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence, type MotionProps } from 'motion/react';
 import { useAgent, useSessionContext, useSessionMessages, useLocalParticipant } from '@livekit/components-react';
+import { Landmark } from 'lucide-react';
+import { useLanguage } from '@/hooks/useLanguage';
 import { MoneyBuddyAvatar } from '@/components/moneybuddy/avatar';
 import { StateIndicator, type CustomAgentState } from '@/components/moneybuddy/state-indicator';
 import { TranscriptPanel } from '@/components/moneybuddy/transcript-panel';
@@ -59,11 +61,15 @@ export function MoneyBuddySessionView({
   className,
   ...props
 }: React.ComponentProps<'section'> & MoneyBuddySessionViewProps) {
+  const { t } = useLanguage();
   const session = useSessionContext();
   const { messages } = useSessionMessages(session);
-  const { state: agentState } = useAgent();
+  const { state: agentState, attributes: agentAttributes } = useAgent();
   const { isMicrophoneEnabled } = useLocalParticipant();
   const [chatOpen] = useState(true); // Transcript always visible in MoneyBuddy
+
+  // Detect whether Government Scheme Specialist is active
+  const isSpecialistActive = agentAttributes?.active_agent === 'specialist';
 
   // Determine exactly what state to show based on connection lifecycle and mic priority
   const isAgentConnecting = !session.isConnected || agentState === 'disconnected';
@@ -111,6 +117,21 @@ export function MoneyBuddySessionView({
 
             {/* State indicator */}
             <StateIndicator state={displayState} />
+
+            {/* Active Specialist Badge */}
+            <AnimatePresence>
+              {isSpecialistActive && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-xs font-semibold text-emerald-600 dark:text-emerald-400 shadow-sm"
+                >
+                  <Landmark className="h-3.5 w-3.5" />
+                  <span>{t('specialist.badge')}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Explainer Texts */}
             <AnimatePresence mode="wait">

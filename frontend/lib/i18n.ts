@@ -13,7 +13,7 @@ export const LANGUAGES: LanguageOption[] = [
   { code: 'hinglish', label: 'Hinglish', nativeLabel: 'Hindi + English', flag: '🇮🇳' },
 ];
 
-type TranslationKey =
+export type TranslationKey =
   | 'welcome.greeting'
   | 'welcome.subtitle'
   | 'welcome.startButton'
@@ -37,7 +37,10 @@ type TranslationKey =
   | 'transcript.empty'
   | 'transcript.you'
   | 'transcript.moneybuddy'
+  | 'transcript.specialist'
   | 'transcript.title'
+  | 'specialist.badge'
+  | 'specialist.connecting'
   | 'nav.analytics'
   | 'nav.backToAgent'
   | 'nav.humanSupport'
@@ -45,7 +48,7 @@ type TranslationKey =
 
 const translations: Record<Language, Record<TranslationKey, string>> = {
   en: {
-    'welcome.greeting': 'Namaste! I\'m MoneyBuddy',
+    'welcome.greeting': "Namaste! I'm MoneyBuddy",
     'welcome.subtitle': 'Your AI companion for simple, responsible financial guidance',
     'welcome.startButton': 'Start Conversation',
     'state.ready': 'Ready to help',
@@ -68,7 +71,10 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'transcript.empty': 'Your conversation will appear here',
     'transcript.you': 'You',
     'transcript.moneybuddy': 'MoneyBuddy',
+    'transcript.specialist': 'Scheme Specialist',
     'transcript.title': 'Live Transcript',
+    'specialist.badge': 'Government Scheme Specialist',
+    'specialist.connecting': 'Connecting to Government Scheme Specialist...',
     'nav.analytics': 'Analytics Dashboard',
     'nav.backToAgent': 'Back to MoneyBuddy',
     'nav.humanSupport': 'Human Support',
@@ -98,7 +104,10 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'transcript.empty': 'आपकी बातचीत यहाँ दिखाई देगी',
     'transcript.you': 'आप',
     'transcript.moneybuddy': 'मनीबडी',
+    'transcript.specialist': 'योजना विशेषज्ञ',
     'transcript.title': 'लाइव ट्रांसक्रिप्ट',
+    'specialist.badge': 'सरकारी योजना विशेषज्ञ',
+    'specialist.connecting': 'सरकारी योजना विशेषज्ञ से जुड़ रहे हैं...',
     'nav.analytics': 'विश्लेषिकी डैशबोर्ड',
     'nav.backToAgent': 'मनीबडी पर वापस जाएं',
     'nav.humanSupport': 'मानव सहायता',
@@ -118,7 +127,7 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'trust.private': 'Aapki baat private hai',
     'trust.neverShare': 'Kabhi bhi OTP, PIN, password ya bank details share na karein',
     'trust.disclaimer': 'MoneyBuddy sirf guidance deta hai, financial results ki guarantee nahi deta.',
-    'mic.required': 'MoneyBuddy se बात करने के लिए microphone की ज़रूरते है।',
+    'mic.required': 'MoneyBuddy se baat karne ke liye microphone ki zaroorat hai.',
     'mic.howTo': 'Browser settings mein microphone allow karein aur phir try karein.',
     'mic.tryAgain': 'Phir Se Try Karein',
     'ended.title': 'Baat khatam hui',
@@ -128,7 +137,10 @@ const translations: Record<Language, Record<TranslationKey, string>> = {
     'transcript.empty': 'Aapki baat yahaan dikhegi',
     'transcript.you': 'Aap',
     'transcript.moneybuddy': 'MoneyBuddy',
+    'transcript.specialist': 'Scheme Specialist',
     'transcript.title': 'Live Transcript',
+    'specialist.badge': 'Government Scheme Specialist',
+    'specialist.connecting': 'Government Scheme Specialist se connect ho rahe hain...',
     'nav.analytics': 'Analytics Dashboard',
     'nav.backToAgent': 'MoneyBuddy par wapas jayein',
     'nav.humanSupport': 'Human Support',
