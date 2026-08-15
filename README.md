@@ -1,289 +1,228 @@
-# Voice Agent Starter — Powered by Murf Falcon
+# MoneyBuddy — Indian Financial Services AI Voice Assistant
 
-Build a production voice AI agent in 5 minutes. Powered by the fastest TTS on the market - swap the system prompt to build anything from customer support to language tutors.
+**MoneyBuddy** is a production-grade, multi-agent AI voice assistant built for the **10 Days of Voice Agents — VoiceForBharat Edition**. Powered by **Murf Falcon TTS** for ultra-low latency speech synthesis, **LiveKit WebRTC** for real-time audio transport, **Deepgram Nova-3** for multilingual Speech-to-Text, and **Google Gemini** for LLM reasoning.
+
+MoneyBuddy educates Indian citizens on government financial schemes, promotes digital banking safety, prevents fraud, manages persistent caller memory, executes human escalations, tracks call metrics, and performs multi-agent specialist handoffs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Murf Falcon](https://img.shields.io/badge/TTS-Murf%20Falcon-6366F1)](https://murf.ai/api/docs/text-to-speech/streaming) [![LiveKit](https://img.shields.io/badge/Transport-LiveKit-002cf2)](https://docs.livekit.io) [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
 ---
 
-## Why Murf Falcon
+## 🚀 Why Murf Falcon
 
-- **55ms model latency** - fastest production TTS
-- **130ms time-to-first-audio** across 10+ global regions
-- **$0.01/1000 characters** - up to 10x cheaper than alternatives
-- **150+ voices** across 35+ languages
-- **99.38% pronunciation accuracy**
+- **55ms Model Latency**: Industry-leading ultra-fast TTS streaming.
+- **130ms Time-to-First-Audio**: Instant voice responsiveness across global regions.
+- **150+ Voices & 35+ Languages**: High-quality regional Indian voices (`Anisha`, `Pooja`, `Kabir`).
+- **99.38% Pronunciation Accuracy**: Precise domain-specific financial terminology synthesis.
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```mermaid
-flowchart LR
-    A[🎙️ User speaks] -->|audio| B[Deepgram STT]
-    B -->|text| C[LLM]
-    C -->|response text| D[Murf Falcon TTS]
-    D -->|audio| E[LiveKit]
-    E -->|stream| F[🔊 User hears]
+flowchart TD
+    User([🎙️ User]) <-->|Real-Time Audio| LiveKit[LiveKit WebRTC Server]
+    LiveKit <-->|Audio Stream| STT[Deepgram STT Nova-3]
+    STT -->|Transcript| Agent[MoneyBuddy Main Agent]
+    
+    subgraph Core Voice Engine
+        Agent <-->|LLM Reasoning| Gemini[Google Gemini 3.5 Flash]
+        Agent <-->|SQLite Memory / Escalations| DB[(SQLite Database: callers.db)]
+        Agent <-->|Grounded Scheme Data| SchemeData[(schemes_data.json)]
+        Agent -->|Specialist Handoff| Specialist[Government Scheme Specialist]
+    end
 
-    style A fill:#444441,stroke:#888780,color:#fff
-    style B fill:#185FA5,stroke:#85B7EB,color:#fff
-    style C fill:#534AB7,stroke:#AFA9EC,color:#fff
-    style D fill:#0F6E56,stroke:#5DCAA5,color:#fff
-    style E fill:#D85A30,stroke:#F0997B,color:#fff
-    style F fill:#444441,stroke:#888780,color:#fff
+    Agent -->|Response Text| TTS[Murf Falcon TTS]
+    Specialist -->|Response Text| TTS
+    TTS -->|Streaming Audio| LiveKit
 ```
 
 ---
 
-## Day 5 Challenge — Domain Data Source & Fallback Policy
+## 📅 10 Days Challenge — Step-by-Step Progress (Days 1–9)
 
-MoneyBuddy uses a grounded, curated local dataset (`backend/src/schemes_data.json`) containing official Indian government financial schemes (PM Kisan Samman Nidhi, PM Suraksha Bima Yojana, PM Jeevan Jyoti Bima Yojana). 
+### 🔹 Day 1: Foundation & Voice AI Pipeline Setup
+- **Track Selected**: Financial Services track for Indian Citizens.
+- **Voice Pipeline**: LiveKit session configured with Deepgram STT (`nova-3`), Google Gemini (`gemini-3.5-flash`), Silero VAD, and **Murf Falcon TTS** using Indian voices (`Pooja` / `Anisha`, `en-IN`).
+- **Concurrency & Prewarming**: Worker process prewarming for Silero VAD to ensure instantaneous turn-taking.
 
-- **Data Origin**: Grounded local JSON dataset containing official scheme parameters, eligibility limits, and document checklists.
-- **Timestamp Transparency**: Every tool response explicitly states data recency (*"Based on our database updated yesterday..."*).
-- **Spoken Fallback Handling**: If the database file is unavailable or unreadable, MoneyBuddy delivers a graceful spoken apology rather than silence or AI hallucination.
-- **Context Chaining**: Automatically reuses stored caller facts (e.g. caller district/occupation from Day 4 memory) without re-asking the caller.
+### 🔹 Day 2: Persona, Guardrails & Red Team Security
+- **Financial Advisor Persona**: System prompt defined in `backend/src/prompt.py` for educating callers on government schemes and digital banking safety.
+- **Strict Financial Guardrails**: Enforced safety rules preventing requests for OTPs, UPI PINs, banking passwords, CVVs, or full card/account numbers, and barring false approval promises.
+- **Multilingual Support**: Dynamic Hinglish keyword detection and script-matching voice updates (`hi-IN-anisha` vs `en-IN-anisha`).
+- **Red Team Evaluation**: Comprehensive security evaluation suite (`RED_TEAM.md`) covering 10 attack and vulnerability scenarios, all verified PASS.
+
+### 🔹 Day 3: Financial Services Frontend & UI State Indicators
+- **Financial Services UI Theme**: Modern Next.js frontend styled with custom emerald/teal theme and accessible typography.
+- **Voice State Indicators**: Real-time visual indicator badges mapping `Ready`, `Connecting`, `Listening`, `Speaking`, and `Call Ended` states.
+- **Microphone Fallback**: Helpful browser permission error dialog with step-by-step unblocking guide.
+- **Live Transcript & Localization**: Real-time auto-scrolling conversation transcript panel with speaker separation and full English / Hindi (हिंदी) / Hinglish interface dictionary.
+
+### 🔹 Day 4: Persistent SQLite Caller Memory & Privacy Safeguards
+- **Persistent Database**: SQLite storage (`callers.db`) saving caller profile (`user_id`, `name`, `language_preference`, `facts`, `last_interaction`).
+- **PII & Credential Sanitization**: `sanitize_facts()` function scrubbing sensitive parameters (account numbers, card numbers, Aadhaar, PAN, PINs, OTPs) prior to database insertion.
+- **Function Tools & Consent**: Agent tools `lookup_caller` and `save_user_facts` requiring explicit caller permission before storing facts.
+- **Personalized Greetings**: Returning callers recognized and greeted warmly by name upon reconnecting.
+
+### 🔹 Day 5: Grounded Domain Data Source & Fallback Policy
+- **Grounded Scheme Dataset**: Curated local dataset (`backend/src/schemes_data.json`) covering official Indian government schemes (PM Kisan Samman Nidhi, PM Suraksha Bima Yojana, PM Jeevan Jyoti Bima Yojana, APY, PMMY).
+- **Domain Function Tool**: `lookup_financial_scheme` tool returning eligibility criteria, benefits, and required document checklists.
+- **Timestamp Transparency**: Spoken transparency included in responses (*"Based on our database updated yesterday..."*).
+- **Graceful Spoken Fallback**: Polite apology delivered if the scheme database becomes unreadable or offline, preventing hallucinations.
+
+### 🔹 Day 6: Outbound Telephony & Campaign Management
+- **LiveKit SIP Outbound Script**: Automated telephony script (`backend/src/outbound.py`) triggering SIP outbound calls over LiveKit trunks.
+- **Outbound Use Case**: Scheme deadline reminders (e.g., PM Kisan eKYC deadline).
+- **Outbound Opening Protocol**: Immediate opening greeting clearly stating caller identity (**MoneyBuddy**), call purpose, and providing an explicit opt-out path.
+
+### 🔹 Day 7: Human Escalation Ticket System & Emergency Workflows
+- **Emergency Escalation Situations**: Triggers for 1) Possible fraud/unauthorized activity, and 2) Lost/stolen credit or debit cards.
+- **Escalation Tool (`create_escalation`)**: Generates sequential ticket reference IDs (`MB-YYYYMMDD-XXX`), records ticket details in SQLite, deduplicates open tickets, and redacts PII.
+- **Caller Consent**: Explicit consent requested before creating an escalation. If denied, conversation continues normally.
+- **Discord Integration**: Optional real-time Discord webhook notifications (`DISCORD_HUMAN_SUPPORT_WEBHOOK_URL`) dispatched for high/emergency urgency tickets.
+
+### 🔹 Day 8: Call Analytics Dashboard & Metric Tracking
+- **Call Outcome Classification**: Automatic categorization of call sessions as `successful` or `failed`.
+- **Categorized Failure Tracking**: Detailed breakdown of failure types (`user_declined`, `incomplete_task`, `tool_failure`, `api_error`, `no_response`, `user_hangup`).
+- **End-to-End Latency Tracking**: Real-time measurement of voice latency (user speech ending to agent speech start) logged per turn and averaged.
+- **Analytics Dashboard**: Dedicated Web Dashboard (`/analytics`) rendering total call counts, success rates, latency trends, and call history logs while strictly protecting PII and raw transcripts.
+
+### 🔹 Day 9: Multi-Agent Architecture & Specialist Handoff
+- **Government Scheme Specialist**: Dedicated specialist agent (`specialist.py`) with distinct persona (`SCHEME_SPECIALIST_PROMPT`) and male Indian voice (`Kabir`, `hi-IN-kabir` / `en-IN-kabir`).
+- **Agent Handoff Tool (`transfer_to_scheme_specialist`)**: Main agent tool transferring control to the specialist upon scheme-specific requests.
+- **Spoken Handoff Announcement**: MoneyBuddy informs the caller before switching (*"Connecting you to our government scheme specialist now."*).
+- **Hand-Back Tool (`transfer_back_to_moneybuddy`)**: Specialist returns control to MoneyBuddy when the scheme task completes or the caller changes topic.
+- **Fallback Resilience**: Graceful fallback preserves main agent control if specialist initialization fails.
+- **Routing Evaluation Suite**: 14-test verification suite (`test_day9_routing.py`) verifying routing across banking, fraud, card loss, scheme queries, human help, and opt-outs.
 
 ---
 
-## Quickstart
+## 🛠️ Quickstart
 
 ### Prerequisites
 
 - **Python** 3.10+
-- **[uv](https://docs.astral.sh/uv/)** - fast Python package manager
+- **[uv](https://docs.astral.sh/uv/)**: Fast Python package manager
   ```bash
-  # macOS/Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
   # Windows (PowerShell)
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
   ```
-- **Node.js** 18+
-- **pnpm** — fast Node package manager
+- **Node.js** 18+ & **pnpm**:
   ```bash
   npm install -g pnpm
   ```
-- A [LiveKit](https://cloud.livekit.io/) project (free tier available)
+- **LiveKit Cloud** account or local LiveKit server executable.
 
-### Step 1: Clone the repo
+### 1. Environment Configuration
 
-```bash
-git clone https://github.com/murf-ai/murf-livekit-starter.git
-cd murf-livekit-starter
+Create `.env.local` in both `backend/` and `frontend/`:
+
+```env
+LIVEKIT_URL=wss://your-livekit-project.livekit.cloud
+LIVEKIT_API_KEY=your-api-key
+LIVEKIT_API_SECRET=your-api-secret
+MURF_API_KEY=your-murf-api-key
+DEEPGRAM_API_KEY=your-deepgram-api-key
+GOOGLE_API_KEY=your-google-gemini-api-key
 ```
 
-### Step 2: Set up environment variables
-
-Create `.env.local` in both `backend/` and `frontend/` (copy from `.env.example` in each). You need:
-
-| Variable                               | Where to get it                                        | Required |
-| -------------------------------------- | ------------------------------------------------------ | -------- |
-| `LIVEKIT_URL`                          | LiveKit Cloud dashboard                                | Yes      |
-| `LIVEKIT_API_KEY`                      | LiveKit Cloud dashboard                                | Yes      |
-| `LIVEKIT_API_SECRET`                   | LiveKit Cloud dashboard                                | Yes      |
-| `MURF_API_KEY`                         | [murf.ai/api/dashboard](https://murf.ai/api/dashboard) | Yes      |
-| `DEEPGRAM_API_KEY`                     | [deepgram.com](https://deepgram.com)                   | Yes      |
-| `GOOGLE_API_KEY` (or `OPENAI_API_KEY`) | Depends on LLM choice                                  | Yes      |
-
-### Step 3: Install backend dependencies
+### 2. Install Dependencies
 
 ```bash
+# Backend
 cd backend
 uv sync
 uv run python src/agent.py download-files
-```
 
-### Step 4: Install frontend dependencies
-
-```bash
-cd frontend
+# Frontend
+cd ../frontend
 pnpm install
 ```
 
-### Step 5: Run it
+### 3. Run the Application
 
-**Option A - All-in-one (from repo root):**
-
-```bash
-# macOS/Linux
-chmod +x start_app.sh
-./start_app.sh
-
-# Windows (PowerShell)
+**Option A — All-in-One Script (Windows PowerShell):**
+```powershell
 .\start_app.ps1
 ```
 
-**Option B - Separate terminals:**
+**Option B — Separate Terminals:**
+```powershell
+# Terminal 1 — LiveKit Server (if local)
+.\livekit-server.exe --dev
+
+# Terminal 2 — Backend Agent
+cd backend
+uv run python src/agent.py dev
+
+# Terminal 3 — Frontend UI
+cd frontend
+pnpm dev
+```
+
+Open **http://localhost:3000** in your browser.
+
+---
+
+## 🧪 Test Suite & Verification
+
+MoneyBuddy includes an extensive test suite covering behavioral rules, memory persistence, escalation ticketing, analytics calculations, and multi-agent routing.
 
 ```bash
-# Terminal 1 — LiveKit Server
-livekit-server --dev
+cd backend
 
-# Terminal 2 — Backend agent
-cd backend && uv run python src/agent.py dev
+# Run pytest unit tests
+uv run pytest tests
 
-# Terminal 3 — Frontend
-cd frontend && pnpm dev
+# Run comprehensive behavioral test suite (16 tests)
+uv run python tests/test_behavioral.py
+
+# Run Day 9 routing and specialist handoff test suite (14 tests)
+uv run python tests/test_day9_routing.py
 ```
-
-Then open **http://localhost:3000** in your browser.
-
-You should now see the voice agent UI. Click **Start talking**, allow microphone access, and speak — the agent will respond with Murf Falcon TTS. Ensure your backend and (if using Option B) LiveKit server are running.
 
 ---
 
-## Deploy
-
-Want to deploy this beyond localhost? You'll need to deploy **two services**: the backend agent and the frontend. Both must use the same LiveKit project.
-
-> This is a two-service app — the backend agent and the frontend UI deploy separately. You'll need both running and connected to the same LiveKit project.
-
-### Backend (Python agent) — Deploy to Railway
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/tIVCF1?referralCode=cNjn2P&utm_medium=integration&utm_source=template&utm_campaign=generic)
-
-Set these environment variables in Railway:
-
-- `MURF_API_KEY`
-- `DEEPGRAM_API_KEY`
-- `GOOGLE_API_KEY` or `OPENAI_API_KEY`
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
-
-The backend runs as a long-lived Python process that connects to LiveKit as an agent. Railway handles this well.
-
-### Frontend (Next.js) — Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/murf-ai/murf-livekit-starter&root-directory=frontend&env=LIVEKIT_URL,LIVEKIT_API_KEY,LIVEKIT_API_SECRET&project-name=murf-voice-agent&repository-name=murf-voice-agent)
-
-Set these environment variables in Vercel:
-
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
-- `AGENT_NAME` (optional — for explicit agent dispatch)
-
-The frontend is a standard Next.js app. Point it at the same LiveKit instance your backend agent is connected to.
-
-### Connecting them
-
-The frontend and backend don't call each other directly — they both connect to **LiveKit**, which handles the real-time audio transport.
-
-1. Use the **same** `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` on both Railway and Vercel
-2. Set `AGENT_NAME=my-agent` on Vercel — this matches the `agent_name="my-agent"` registered in `backend/src/agent.py`
-3. Verify: Railway logs should show the agent connected to LiveKit. Open your Vercel URL, click **Start talking** — the agent should respond
-
-If the agent doesn't connect, double-check that both services point to the same LiveKit project and that the backend is running (check Railway logs).
-
----
-
-## Change the Use Case
-
-The default system prompt makes this a **customer support agent**. You can change the agent’s behavior by editing the prompt.
-
-**Where the prompt lives:** `backend/src/agent.py`- the `SYSTEM_PROMPT` constant (near the top of the file, after the imports). Change that string to change what your voice agent does.
-
-### Example prompts (copy-paste)
-
-**Customer Support (default):**
-
-```
-You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate.
-```
-
-**Language Tutor:**
-
-```
-You are a patient and encouraging language tutor helping the user practice conversational Spanish. Speak primarily in Spanish but switch to English to explain grammar or vocabulary when needed. Correct mistakes gently and suggest better phrasing. Keep conversations natural and fun.
-```
-
-**AI Receptionist:**
-
-```
-You are a professional receptionist for a medical clinic. Help callers schedule appointments, answer questions about office hours and services, and take messages for doctors. Be warm but efficient. Ask for the caller's name and reason for calling upfront.
-```
-
-See the Configuration section below for voice, STT, and LLM options.
-
----
-
-## Configuration
-
-### Murf voice
-
-Edit the `tts=murf.TTS(...)` call in `backend/src/agent.py`. Set the `voice` argument to any Murf voice ID. Examples:
-
-- `Anisha` — Indian English (female, default in this starter)
-- `Pooja` — Indian English (female)
-- `Samar` — Indian English (male)
-- `Amara` — US English (female)
-- `Gordon` — US English (male)
-- `Hazel` — UK English (female)
-- `Bertie` — UK English (male)
-
-Browse all voices: [Murf Voice Library](https://murf.ai/api/docs/voices-styles/voice-library).
-
-### STT provider
-
-STT is configured in `backend/src/agent.py` in the `AgentSession(stt=...)` call. The default is Deepgram (`deepgram.STT(model="nova-3")`). You can swap to another LiveKit-compatible STT plugin if needed.
-
-### LLM (Gemini vs OpenAI)
-
-- **Gemini (default):** Set `GOOGLE_API_KEY` and use `llm=google.LLM(model="gemini-3.5-flash-lite")` in `agent.py`.
-- **OpenAI:** Set `OPENAI_API_KEY`, add the OpenAI plugin, and use the corresponding `llm=openai.LLM(...)` in `agent.py`.
-
-### Audio format
-
-Murf Falcon and LiveKit handle audio format internally. For advanced options, see [Murf API docs](https://murf.ai/api/docs) and [LiveKit docs](https://docs.livekit.io).
-
----
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 murf-livekit-starter/
-├── backend/                 # Python voice agent (LiveKit Agents + Murf Falcon)
+├── backend/
 │   ├── src/
-│   │   └── agent.py         # Agent entrypoint, pipeline (STT/LLM/TTS), system prompt
-│   ├── tests/               # Agent tests
-│   ├── .env.example         # Backend env template
-│   ├── pyproject.toml       # Python deps (uv)
-│   └── railway.toml         # Railway deploy config
-├── frontend/                # Next.js UI for voice sessions
+│   │   ├── agent.py               # Entrypoint & main MoneyBuddy agent session pipeline
+│   │   ├── specialist.py          # Day 9 Government Scheme Specialist agent & handoff logic
+│   │   ├── prompt.py              # MoneyBuddy system prompt & guardrails
+│   │   ├── specialist_prompt.py   # Scheme Specialist system prompt
+│   │   ├── db.py                  # SQLite database (callers memory, escalations, analytics calls)
+│   │   ├── schemes_data.json      # Grounded domain dataset for Indian financial schemes
+│   │   ├── outbound.py            # LiveKit SIP outbound calling script
+│   │   └── dashboard.py           # Standalone HTTP analytics & escalation status dashboard
+│   ├── tests/
+│   │   ├── test_agent.py          # Pytest session tests
+│   │   ├── test_behavioral.py     # 16 behavioral test scenarios (Days 4-8)
+│   │   ├── test_day9_routing.py   # 14 routing & specialist handoff tests (Day 9)
+│   │   └── test_tts_handoff.py    # TTS handoff unit tests
+│   ├── .env.example
+│   └── pyproject.toml
+├── frontend/
 │   ├── app/
-│   │   ├── page.tsx         # Main page
-│   │   └── api/token/       # LiveKit token endpoint (dev)
-│   ├── components/          # UI (agents-ui, app config, theme)
-│   ├── app-config.ts        # Branding, title, button text, accent
-│   ├── .env.example         # Frontend env template
-│   └── package.json         # Node deps (pnpm)
-├── start_app.sh             # Start LiveKit + backend + frontend (macOS/Linux)
-├── start_app.ps1            # Start LiveKit + backend + frontend (Windows)
-├── README.md                # This file
+│   │   ├── page.tsx               # Main voice UI page
+│   │   ├── analytics/page.tsx     # Real-time Call Analytics Dashboard
+│   │   ├── escalations/page.tsx   # Human Escalation Ticket Dashboard
+│   │   └── api/                   # Token & Analytics REST endpoints
+│   ├── components/
+│   │   ├── app/                   # WebRTC session & view controllers
+│   │   └── moneybuddy/            # Avatar, status indicators, transcript, language selectors
+│   ├── app-config.ts              # MoneyBuddy branding & features config
+│   └── package.json
+├── RED_TEAM.md                    # Day 2 Red Team security evaluation report (10 test cases)
+├── start_app.ps1                  # All-in-one launch script for Windows
+├── start_app.sh                   # All-in-one launch script for Linux/macOS
+└── README.md                      # Project documentation
 ```
 
-For deeper documentation on each part, see:
-
-- [Backend Documentation](./backend/README.md) — agent pipeline, voice/LLM/STT configuration, testing, deployment
-- [Frontend Documentation](./frontend/README.md) — UI customization, visualizers, theming, component architecture
-
 ---
 
-## Links
+## 📄 License
 
-- [Murf API Docs](https://murf.ai/api/docs)
-- [Murf Voice Library](https://murf.ai/api/docs/voices-styles/voice-library)
-- [LiveKit Docs](https://docs.livekit.io)
-- [Deepgram Docs](https://developers.deepgram.com)
-- [Murf Falcon Benchmarks](https://murf.ai/falcon/benchmarks)
-- [TTS Latency Benchmarker](https://github.com/sahilsgupta/tts-latency-benchmarker) — run your own p50/p95 tests across providers
-- [Murf Discord](https://discord.gg/FbKAy96Sz7)
-- [Murf Startup Incubator](https://murf.ai/api) — 50M free characters for startups
-
----
-
-## License
-
-MIT
+Distributed under the **MIT License**. See `LICENSE` for details.
